@@ -17,6 +17,11 @@ public class ProceduralAnimator : MonoBehaviour
     public bool panicking;
     [Tooltip("Siegniecie po przedmiot (kradziez walizki) - bardzo ludzki ruch.")]
     public bool reaching;
+    [Tooltip("Punkt w swiecie, do ktorego siegaja rece (np. raczka walizki).")]
+    public Vector3 reachTarget;
+    public bool hasReachTarget;
+    [Tooltip("Jak blisko musi byc dlon, zeby zlapac przedmiot.")]
+    public float grabDistance = 0.22f;
 
     [Header("Wyglad")]
     [Tooltip("Kolorowe koszulki i spodnie. Wylaczone = wszyscy sa bialymi Bobami jak w Human Fall Flat.")]
@@ -43,6 +48,8 @@ public class ProceduralAnimator : MonoBehaviour
     public bool IsDead { get; private set; }
     public Transform TorsoTransform => torso != null ? torso.rb.transform : transform;
     public float CurrentSpeed => smoothSpeed;
+    public bool IsHolding => grabJoints.Count > 0 && heldBody != null;
+    public Rigidbody HeldBody => IsHolding ? heldBody : null;
 
     // ---------------------------------------------------------------------
 
@@ -51,6 +58,7 @@ public class ProceduralAnimator : MonoBehaviour
         public Rigidbody rb;
         public ConfigurableJoint joint;
         public Vector3 restPos;
+        public Quaternion restRot = Quaternion.identity;
         public float halfLength;
         public float spring, damper;
     }
@@ -72,6 +80,11 @@ public class ProceduralAnimator : MonoBehaviour
     float gait;          // 0 = stoi, 1 = normalny chod, >1 = bieg
     float smoothSpeed;
     bool appliedRobotic;
+    bool appliedArmGrip;
+    Rigidbody heldBody;
+    Collider heldCollider;
+    readonly List<FixedJoint> grabJoints = new List<FixedJoint>();
+    readonly List<Part> grabbingHands = new List<Part>();
     float strideVariation = 1f;
 
     // --- Warstwy fizyki -----------------------------------------------------
@@ -169,10 +182,12 @@ public class ProceduralAnimator : MonoBehaviour
         torso = CreatePart("Torso", new Vector3(0f, 1.20f, 0f), new Vector3(0f, 0.80f, 0f), 0.25f, 0.29f, 15f, shirtMat, 1f, 1f, 0.82f);
         head = CreatePart("Head", new Vector3(0f, 1.66f, 0f), new Vector3(0f, 1.66f, 0f), 0.25f, 0.25f, 4f, skinMat, 1f, 1.06f, 1f);
 
-        upperArmL = CreatePart("UpperArm_L", new Vector3(-0.32f, 1.36f, 0f), new Vector3(-0.32f, 1.11f, 0f), 0.09f, 0.08f, 2f, shirtMat);
-        upperArmR = CreatePart("UpperArm_R", new Vector3(0.32f, 1.36f, 0f), new Vector3(0.32f, 1.11f, 0f), 0.09f, 0.08f, 2f, shirtMat);
-        foreArmL = CreatePart("ForeArm_L", new Vector3(-0.32f, 1.11f, 0f), new Vector3(-0.32f, 0.88f, 0f), 0.08f, 0.10f, 1.5f, skinMat);
-        foreArmR = CreatePart("ForeArm_R", new Vector3(0.32f, 1.11f, 0f), new Vector3(0.32f, 0.88f, 0f), 0.08f, 0.10f, 1.5f, skinMat);
+        // Bark jest schowany w gornej czesci tulowia, reka schodzi skosnie na zewnatrz -
+        // dzieki temu nigdy nie ma szczeliny miedzy reka a cialem.
+        upperArmL = CreatePart("UpperArm_L", new Vector3(-0.23f, 1.34f, 0f), new Vector3(-0.33f, 1.10f, 0f), 0.095f, 0.085f, 2f, shirtMat);
+        upperArmR = CreatePart("UpperArm_R", new Vector3(0.23f, 1.34f, 0f), new Vector3(0.33f, 1.10f, 0f), 0.095f, 0.085f, 2f, shirtMat);
+        foreArmL = CreatePart("ForeArm_L", new Vector3(-0.33f, 1.10f, 0f), new Vector3(-0.37f, 0.88f, 0f), 0.085f, 0.10f, 1.5f, skinMat);
+        foreArmR = CreatePart("ForeArm_R", new Vector3(0.33f, 1.10f, 0f), new Vector3(0.37f, 0.88f, 0f), 0.085f, 0.10f, 1.5f, skinMat);
 
         thighL = CreatePart("Thigh_L", new Vector3(-0.15f, 0.70f, 0f), new Vector3(-0.15f, 0.42f, 0f), 0.125f, 0.11f, 4f, pantsMat);
         thighR = CreatePart("Thigh_R", new Vector3(0.15f, 0.70f, 0f), new Vector3(0.15f, 0.42f, 0f), 0.125f, 0.11f, 4f, pantsMat);
@@ -182,6 +197,11 @@ public class ProceduralAnimator : MonoBehaviour
         // Stopki - czysto wizualne, wystaja lekko do przodu
         AddFoot(shinL, shoeMat);
         AddFoot(shinR, shoeMat);
+
+        // Oczy: dwa ciemne owale jak w Human Fall Flat / Gang Beasts (bez colliderow)
+        Material eyeMat = LowPolyFactory.GetBodyMaterial(new Color(0.07f, 0.07f, 0.09f));
+        AddEye(head, new Vector3(-0.085f, 0.04f, 0.222f), eyeMat);
+        AddEye(head, new Vector3(0.085f, 0.04f, 0.222f), eyeMat);
 
         // Stawy: (dziecko, rodzic, punkt obrotu, limity X low/high, limit Y, limit Z, sprezyna, tlumienie)
         // Punkt obrotu konczyn = srodek gornej polkuli czesci.
@@ -244,9 +264,13 @@ public class ProceduralAnimator : MonoBehaviour
         float length = Vector3.Distance(top, bottom);
         Vector3 center = (top + bottom) * 0.5f;
 
+        // Os Y czesci biegnie od "bottom" do "top" (skosne rece)
+        Quaternion restRot = length > 0.0001f ? Quaternion.FromToRotation(Vector3.up, (top - bottom) / length) : Quaternion.identity;
+
         var go = new GameObject(partName);
         go.transform.SetParent(ragdollRoot.transform, false);
         go.transform.localPosition = center;
+        go.transform.localRotation = restRot;
         if (ragdollLayer >= 0) go.layer = ragdollLayer;
 
         go.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.SmoothCapsule(rBottom, rTop, length, sx, sy, sz);
@@ -276,9 +300,20 @@ public class ProceduralAnimator : MonoBehaviour
 
         go.AddComponent<RagdollPart>().owner = this;
 
-        var part = new Part { rb = rb, restPos = center, halfLength = length * 0.5f };
+        var part = new Part { rb = rb, restPos = center, restRot = restRot, halfLength = length * 0.5f };
         parts.Add(part);
         return part;
+    }
+
+    void AddEye(Part headPart, Vector3 localPos, Material mat)
+    {
+        var eye = new GameObject("Eye");
+        eye.transform.SetParent(headPart.rb.transform, false);
+        eye.transform.localPosition = localPos;
+        // Lekko odchylone zgodnie z krzywizna glowy
+        eye.transform.localRotation = Quaternion.Euler(-8f, localPos.x * 120f, 0f);
+        eye.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.SmoothCapsule(0.036f, 0.036f, 0f, 1f, 1.4f, 0.45f, 12, 5);
+        eye.AddComponent<MeshRenderer>().sharedMaterial = mat;
     }
 
     void AddFoot(Part shin, Material mat)
@@ -286,7 +321,7 @@ public class ProceduralAnimator : MonoBehaviour
         var foot = new GameObject("Foot");
         foot.transform.SetParent(shin.rb.transform, false);
         // Srodek stopy: 7.5 cm nad ziemia, 4 cm do przodu; kapsula polozona wzdluz osi Z
-        foot.transform.localPosition = new Vector3(0f, 0.075f - shin.restPos.y, 0.04f);
+        foot.transform.localPosition = new Vector3(0f, 0.075f - shin.restPos.y, 0.04f); // goleń jest pionowa
         foot.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         foot.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.SmoothCapsule(0.075f, 0.075f, 0.12f, 1.3f, 1f, 0.85f, 16, 6);
         foot.AddComponent<MeshRenderer>().sharedMaterial = mat;
@@ -321,18 +356,23 @@ public class ProceduralAnimator : MonoBehaviour
         child.damper = damper;
     }
 
+    bool ArmGrip => reaching || IsHolding;
+
     void ApplyDrives()
     {
         appliedRobotic = roboticMovement;
+        appliedArmGrip = ArmGrip;
         float s = roboticMovement ? RoboticStiffness : 1f;
         float d = roboticMovement ? 1.6f : 1f;
         foreach (var p in parts)
         {
             if (p.joint == null) continue;
+            bool arm = p == upperArmL || p == upperArmR || p == foreArmL || p == foreArmR;
+            float grip = arm && appliedArmGrip ? 3f : 1f; // trzymanie walizki wymaga silniejszych rak
             p.joint.slerpDrive = new JointDrive
             {
-                positionSpring = p.spring * s,
-                positionDamper = p.damper * d,
+                positionSpring = p.spring * s * grip,
+                positionDamper = p.damper * d * Mathf.Sqrt(grip),
                 maximumForce = float.MaxValue
             };
         }
@@ -380,7 +420,7 @@ public class ProceduralAnimator : MonoBehaviour
         foreach (var p in parts)
         {
             p.rb.position = feet + facing * p.restPos;
-            p.rb.rotation = facing;
+            p.rb.rotation = facing * p.restRot;
             p.rb.linearVelocity = Vector3.zero;
             p.rb.angularVelocity = Vector3.zero;
         }
@@ -391,7 +431,8 @@ public class ProceduralAnimator : MonoBehaviour
     void FixedUpdate()
     {
         if (IsDead || torso == null) return;
-        if (appliedRobotic != roboticMovement) ApplyDrives();
+        if (grabJoints.Count > 0 && heldBody == null) CleanupGrab(); // przedmiot zniknal (ukradziony)
+        if (appliedRobotic != roboticMovement || appliedArmGrip != ArmGrip) ApplyDrives();
 
         float dt = Time.fixedDeltaTime;
         Vector3 rootVel = GetRootVelocity();
@@ -407,8 +448,9 @@ public class ProceduralAnimator : MonoBehaviour
         if (roboticMovement) AnimateRobotic(out bob, out lean, out roll);
         else AnimateHuman(out bob, out lean, out roll);
 
-        if (panicking) AnimatePanicArms();
-        else if (reaching) AnimateReach(ref lean);
+        if (IsHolding) AnimateCarry(ref lean);
+        else if (panicking) AnimatePanicArms();
+        else if (reaching) AnimateReach(ref lean, ref bob);
 
         Balance(rootVel, bob, lean, roll);
     }
@@ -425,8 +467,8 @@ public class ProceduralAnimator : MonoBehaviour
         SetTarget(shinL, Quaternion.Euler(Mathf.Max(0f, c) * knee, 0f, 0f));
         SetTarget(shinR, Quaternion.Euler(Mathf.Max(0f, -c) * knee, 0f, 0f));
 
-        SetTarget(upperArmL, Quaternion.Euler(s * arm, 0f, -8f));
-        SetTarget(upperArmR, Quaternion.Euler(-s * arm, 0f, 8f));
+        SetTarget(upperArmL, Quaternion.Euler(s * arm, 0f, 0f));
+        SetTarget(upperArmR, Quaternion.Euler(-s * arm, 0f, 0f));
         SetTarget(foreArmL, Quaternion.Euler(-(15f + 20f * gait), 0f, 0f));
         SetTarget(foreArmR, Quaternion.Euler(-(15f + 20f * gait), 0f, 0f));
 
@@ -448,8 +490,8 @@ public class ProceduralAnimator : MonoBehaviour
         SetTarget(shinL, Quaternion.Euler(5f * gait, 0f, 0f));
         SetTarget(shinR, Quaternion.Euler(5f * gait, 0f, 0f));
 
-        SetTarget(upperArmL, Quaternion.Euler(q * arm, 0f, -3f));
-        SetTarget(upperArmR, Quaternion.Euler(-q * arm, 0f, 3f));
+        SetTarget(upperArmL, Quaternion.Euler(q * arm, 0f, 4f));
+        SetTarget(upperArmR, Quaternion.Euler(-q * arm, 0f, -4f));
         SetTarget(foreArmL, Quaternion.Euler(-5f, 0f, 0f));
         SetTarget(foreArmR, Quaternion.Euler(-5f, 0f, 0f));
 
@@ -471,16 +513,117 @@ public class ProceduralAnimator : MonoBehaviour
         SetTarget(foreArmR, Quaternion.Euler(-30f, 0f, 0f));
     }
 
-    // Pochylenie i siegniecie obiema rekami w dol-przod
-    void AnimateReach(ref float lean)
+    // Siegniecie po przedmiot: rece celuja w punkt, a jesli jest nisko - pochylenie i przysiad
+    void AnimateReach(ref float lean, ref float bob)
     {
-        float t = Mathf.Sin(Time.time * 9f) * 8f;
-        SetTarget(upperArmL, Quaternion.Euler(-70f + t, 0f, 5f));
-        SetTarget(upperArmR, Quaternion.Euler(-70f - t, 0f, -5f));
-        SetTarget(foreArmL, Quaternion.Euler(-20f, 0f, 0f));
-        SetTarget(foreArmR, Quaternion.Euler(-20f, 0f, 0f));
-        SetTarget(head, Quaternion.Euler(25f, 0f, 0f));
-        lean += 25f;
+        if (!hasReachTarget)
+        {
+            SetTarget(upperArmL, Quaternion.Euler(-70f, 0f, 0f));
+            SetTarget(upperArmR, Quaternion.Euler(-70f, 0f, 0f));
+            SetTarget(foreArmL, Quaternion.identity);
+            SetTarget(foreArmR, Quaternion.identity);
+            lean += 25f;
+            return;
+        }
+
+        float heightAboveFeet = reachTarget.y - GetFeetPosition().y;
+        float low = Mathf.Clamp01((1.1f - heightAboveFeet) / 0.6f);
+        lean += 15f + 50f * low;
+        bob -= 0.18f * low;
+
+        // Przysiad: uda do przodu, kolana zgiete
+        SetTarget(thighL, Quaternion.Euler(-45f * low, 0f, 0f));
+        SetTarget(thighR, Quaternion.Euler(-45f * low, 0f, 0f));
+        SetTarget(shinL, Quaternion.Euler(80f * low, 0f, 0f));
+        SetTarget(shinR, Quaternion.Euler(80f * low, 0f, 0f));
+        SetTarget(head, Quaternion.Euler(20f * low, 0f, 0f));
+
+        // Kazda reka celuje troche obok srodka, zeby obie dlonie zlapaly raczke
+        Vector3 side = torso.rb.transform.right * 0.08f;
+        AimArm(upperArmL, foreArmL, reachTarget - side);
+        AimArm(upperArmR, foreArmR, reachTarget + side);
+    }
+
+    // Niesienie przedmiotu przed brzuchem
+    void AnimateCarry(ref float lean)
+    {
+        Transform t = torso.rb.transform;
+        Vector3 hold = t.position + GetFacing() * Vector3.forward * 0.5f - Vector3.up * 0.1f;
+        AimArm(upperArmL, foreArmL, hold - t.right * 0.1f);
+        AimArm(upperArmR, foreArmR, hold + t.right * 0.1f);
+        lean += 5f;
+    }
+
+    // Prosta "IK": wyprostowana reka skierowana z barku na punkt w swiecie
+    void AimArm(Part upper, Part fore, Vector3 worldTarget)
+    {
+        Vector3 shoulder = upper.rb.transform.TransformPoint(TopAnchor(upper));
+        Vector3 dir = worldTarget - shoulder;
+        if (dir.sqrMagnitude < 0.0001f) return;
+        Vector3 dirTorso = Quaternion.Inverse(torso.rb.rotation) * dir.normalized;
+        Vector3 restDir = upper.restRot * Vector3.down;
+        Quaternion swing = Quaternion.FromToRotation(restDir, dirTorso);
+        SetTarget(upper, Quaternion.Inverse(upper.restRot) * swing * upper.restRot);
+        SetTarget(fore, Quaternion.identity);
+    }
+
+    Vector3 HandPoint(Part fore) => fore.rb.transform.TransformPoint(0f, -fore.halfLength, 0f);
+
+    // Odleglosc najblizszej dloni od collidera (do podpowiedzi i AI)
+    public float HandDistance(Collider target)
+    {
+        if (torso == null || target == null) return float.MaxValue;
+        float best = float.MaxValue;
+        foreach (var hand in new[] { foreArmL, foreArmR })
+        {
+            Vector3 p = HandPoint(hand);
+            best = Mathf.Min(best, Vector3.Distance(target.ClosestPoint(p), p));
+        }
+        return best;
+    }
+
+    // Lapanie jak w Gang Beasts: dlon, ktora dotknie przedmiotu, przykleja sie do niego.
+    // Wywolywac co klatke podczas siegania - druga reka dolacza, gdy tez dosiegnie.
+    public bool TryGrab(Collider target, Rigidbody body)
+    {
+        if (IsDead || torso == null || target == null || body == null) return false;
+        if (heldBody != null && heldBody != body) Release();
+
+        foreach (var hand in new[] { foreArmL, foreArmR })
+        {
+            if (grabbingHands.Contains(hand)) continue;
+            Vector3 p = HandPoint(hand);
+            if (Vector3.Distance(target.ClosestPoint(p), p) > grabDistance) continue;
+
+            if (heldBody == null)
+            {
+                heldBody = body;
+                heldCollider = target;
+                foreach (var part in parts) Physics.IgnoreCollision(part.rb.GetComponent<Collider>(), target, true);
+            }
+            var joint = body.gameObject.AddComponent<FixedJoint>();
+            joint.connectedBody = hand.rb;
+            joint.enableCollision = false;
+            grabJoints.Add(joint);
+            grabbingHands.Add(hand);
+        }
+        return IsHolding;
+    }
+
+    public void Release()
+    {
+        foreach (var j in grabJoints) if (j != null) Destroy(j);
+        if (heldCollider != null)
+            foreach (var part in parts) Physics.IgnoreCollision(part.rb.GetComponent<Collider>(), heldCollider, false);
+        CleanupGrab();
+    }
+
+    void CleanupGrab()
+    {
+        grabJoints.Clear();
+        grabbingHands.Clear();
+        heldBody = null;
+        heldCollider = null;
     }
 
     void Balance(Vector3 rootVel, float bob, float lean, float roll)
@@ -529,6 +672,7 @@ public class ProceduralAnimator : MonoBehaviour
     {
         if (IsDead || torso == null) return;
         IsDead = true;
+        Release();
 
         foreach (var p in parts)
         {

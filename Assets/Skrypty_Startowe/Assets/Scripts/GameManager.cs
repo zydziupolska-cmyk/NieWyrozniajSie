@@ -465,7 +465,7 @@ public class GameManager : MonoBehaviour
             "<b>WSAD</b> – ruch, <b>mysz</b> – kamera\n" +
             "<b>SHIFT</b> (trzymaj) – TRYB NPC: ruszasz się jak bot\n" +
             "<b>SPACJA</b> – bieg w panice z rękami w górze\n" +
-            "<b>E</b> (trzymaj) – kradzież walizki (NIE działa w trybie NPC)\n\n" +
+            "<b>E</b> (trzymaj) – złap walizkę rękami i trzymaj (NIE w trybie NPC)\n\n" +
             "Czerwony laser pokazuje, gdzie patrzy snajper. Gdy tłum wpadnie w panikę – panikuj razem z nim!";
         string sniperHelp =
             "<b>Cel:</b> zastrzel " + GameConfig.AISpyCount + " szpiegów, mając tylko " + GameConfig.PlayerSniperAmmo + " naboi.\n\n" +
@@ -528,10 +528,12 @@ public class GameManager : MonoBehaviour
                 Suitcase near = playerSpyCtrl.NearbySuitcase;
                 if (near != null)
                 {
-                    string prompt = playerSpyCtrl.isNpcMode ? "Puść SHIFT, żeby móc ukraść walizkę"
-                                  : playerSpyCtrl.IsStealing ? "Kradzież..." : "Przytrzymaj E, aby ukraść walizkę";
+                    string prompt = playerSpyCtrl.isNpcMode ? "Puść SHIFT, żeby móc złapać walizkę"
+                                  : playerSpyCtrl.IsHolding ? "Masz ją! Trzymaj E, aż schowasz walizkę..."
+                                  : playerSpyCtrl.IsReaching ? "Sięgasz... podejdź bliżej, jeśli ręce nie dosięgają"
+                                  : "Przytrzymaj E, aby złapać walizkę";
                     Label(new Rect(0, h * 0.62f, w, 50 * s), prompt, bigStyle, Color.white);
-                    if (playerSpyCtrl.IsStealing)
+                    if (playerSpyCtrl.IsHolding)
                     {
                         Rect bar = new Rect(w / 2f - 200 * s, h * 0.62f + 56 * s, 400 * s, 20 * s);
                         Fill(bar, new Color(0f, 0f, 0f, 0.5f));
@@ -541,7 +543,7 @@ public class GameManager : MonoBehaviour
             }
 
             Label(new Rect(20 * s, h - 60 * s, 900 * s, 50 * s),
-                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E kradzież · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
+                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E łap walizkę · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
         }
         else
         {

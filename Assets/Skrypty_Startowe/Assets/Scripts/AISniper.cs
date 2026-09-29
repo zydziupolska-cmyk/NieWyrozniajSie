@@ -134,7 +134,7 @@ public class AISniper : MonoBehaviour
         float e = 0f;
 
         if (!a.roboticMovement && speed > 0.3f) e += 1.3f;        // plynny, ludzki ruch
-        if (a.reaching) e += 2.5f;                                 // grzebie przy walizce
+        if (a.reaching || a.IsHolding) e += 2.5f;                 // siega po walizke albo ja trzyma
         if (panic)
         {
             if (!a.panicking) e += 0.9f;                           // spokojny, gdy wszyscy wariuja

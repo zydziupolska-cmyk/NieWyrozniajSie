@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 // Szpieg sterowany przez gracza (widok TPP).
 // SHIFT  - tryb NPC: kanciasty ruch identyczny jak u botow
 // SPACJA - bieg w panice z rekami w gorze (nasladowanie tlumu)
-// E      - kradziez walizki (tylko poza trybem NPC!)
+// E      - zlap walizke rekami i trzymaj, az zniknie pod plaszczem (tylko poza trybem NPC!)
 [RequireComponent(typeof(CharacterController))]
 public class SpyController : MonoBehaviour
 {
@@ -25,7 +25,11 @@ public class SpyController : MonoBehaviour
     public bool isPanicRunning = false;
 
     public Suitcase NearbySuitcase { get; private set; }
-    public bool IsStealing { get; private set; }
+    public bool IsStealing => IsHolding || IsReaching;
+    public bool IsHolding => heldSuitcase != null;
+    public bool IsReaching { get; private set; }
+
+    private Suitcase heldSuitcase;
     public Transform CameraTransform { get; set; }
 
     void Start()
@@ -44,26 +48,44 @@ public class SpyController : MonoBehaviour
         isNpcMode = kb != null && kb.leftShiftKey.isPressed;
         isPanicRunning = kb != null && kb.spaceKey.isPressed;
 
-        NearbySuitcase = Suitcase.Nearest(transform.position, GameConfig.StealDistance);
-        IsStealing = !isNpcMode && NearbySuitcase != null && kb != null && kb.eKey.isPressed;
+        bool wantGrab = !isNpcMode && kb != null && kb.eKey.isPressed;
+
+        // Puszczenie E / wejscie w tryb NPC = walizka spada na ziemie
+        if (heldSuitcase != null && (!wantGrab || !animator.IsHolding))
+        {
+            animator.Release();
+            heldSuitcase = null;
+        }
+
+        NearbySuitcase = heldSuitcase != null ? heldSuitcase : Suitcase.Nearest(transform.position, GameConfig.StealDistance);
+        IsReaching = heldSuitcase == null && wantGrab && NearbySuitcase != null;
 
         animator.roboticMovement = isNpcMode;
         animator.panicking = isPanicRunning && !IsStealing;
-        animator.reaching = IsStealing;
+        animator.reaching = IsReaching;
+        animator.hasReachTarget = IsReaching;
+        if (IsReaching) animator.reachTarget = NearbySuitcase.GrabPoint;
 
-        if (IsStealing)
+        if (IsReaching)
         {
+            // Rece szukaja raczki; mozna lekko dreptac, zeby dosiegnac
             FaceTowards(NearbySuitcase.transform.position);
-            NearbySuitcase.AddProgress(Time.deltaTime / GameConfig.PlayerStealTime, member);
-            ApplyMotion(Vector3.zero);
+            if (animator.TryGrab(NearbySuitcase.Col, NearbySuitcase.Body)) heldSuitcase = NearbySuitcase;
+            HandleMovement(kb, 0.35f, false);
+        }
+        else if (heldSuitcase != null)
+        {
+            // Trzymamy walizke - chowanie jej trwa chwile, mozna przy tym isc
+            heldSuitcase.AddProgress(Time.deltaTime / GameConfig.PlayerStealTime, member);
+            HandleMovement(kb, 0.6f, true);
         }
         else
         {
-            HandleMovement(kb);
+            HandleMovement(kb, 1f, true);
         }
     }
 
-    void HandleMovement(Keyboard kb)
+    void HandleMovement(Keyboard kb, float speedMultiplier, bool rotate)
     {
         float h = 0f;
         float v = 0f;
@@ -85,7 +107,11 @@ public class SpyController : MonoBehaviour
             float targetAngle = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg + camYaw;
             Vector3 moveDir = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
 
-            if (isNpcMode)
+            if (!rotate)
+            {
+                motion = moveDir * humanSpeed * speedMultiplier;
+            }
+            else if (isNpcMode)
             {
                 // NPC Mode: natychmiastowy obrot i stala predkosc - jak bot
                 transform.rotation = Quaternion.Euler(0f, targetAngle, 0f);
@@ -96,7 +122,7 @@ public class SpyController : MonoBehaviour
                 // Human Mode: plynny obrot i szybszy chod
                 float angle = Mathf.SmoothDampAngle(transform.eulerAngles.y, targetAngle, ref turnVelocity, turnSmoothTime);
                 transform.rotation = Quaternion.Euler(0f, angle, 0f);
-                motion = moveDir * (isPanicRunning ? panicSpeed : humanSpeed);
+                motion = moveDir * (isPanicRunning ? panicSpeed : humanSpeed) * speedMultiplier;
             }
         }
 

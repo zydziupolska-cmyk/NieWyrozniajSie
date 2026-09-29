@@ -23,6 +23,7 @@ public class AISpy : MonoBehaviour
     float quirkTimer;
     float panicReactTimer = -1f;
     float panicTimer;
+    float grabTimer;
 
     void Start()
     {
@@ -73,7 +74,7 @@ public class AISpy : MonoBehaviour
             target = PickSuitcase();
 
         if (target != null && panicTimer <= 0f &&
-            Vector3.Distance(transform.position, target.transform.position) < GameConfig.StealDistance - 0.2f)
+            Vector3.Distance(transform.position, target.transform.position) < 1.1f)
         {
             BeginSteal();
             return;
@@ -110,7 +111,7 @@ public class AISpy : MonoBehaviour
             if (dist < 6f)
             {
                 // Ostatnie metry - prosto do walizki (stajemy obok niej)
-                Vector3 spot = target.transform.position - to.normalized * 0.9f;
+                Vector3 spot = target.transform.position - to.normalized * 0.6f;
                 if (NavMesh.SamplePosition(spot, out NavMeshHit hit, 1.5f, NavMesh.AllAreas))
                 {
                     agent.SetDestination(hit.position);
@@ -163,6 +164,7 @@ public class AISpy : MonoBehaviour
     {
         state = State.Steal;
         isIdle = false;
+        grabTimer = 0f;
         agent.isStopped = true;
         agent.ResetPath();
     }
@@ -181,14 +183,33 @@ public class AISpy : MonoBehaviour
             transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(to), dt * 8f);
 
         anim.roboticMovement = false;
-        anim.reaching = true;
+        if (!anim.IsHolding)
+        {
+            // Siegamy po raczke - jesli rece nie dosiegaja zbyt dlugo, rezygnujemy i wracamy pozniej
+            anim.reaching = true;
+            anim.hasReachTarget = true;
+            anim.reachTarget = target.GrabPoint;
+            anim.TryGrab(target.Col, target.Body);
+            grabTimer += dt;
+            if (grabTimer > 4f)
+            {
+                EndSteal();
+                nextTheftTime = Time.time + Random.Range(3f, 6f);
+            }
+            return;
+        }
+
+        anim.reaching = false;
+        anim.hasReachTarget = false;
         target.AddProgress(dt / GameConfig.AIStealTime, member);
         if (target == null || target.IsStolen) EndSteal();
     }
 
     void EndSteal()
     {
+        anim.Release();
         anim.reaching = false;
+        anim.hasReachTarget = false;
         anim.roboticMovement = true;
         agent.isStopped = false;
         target = null;
