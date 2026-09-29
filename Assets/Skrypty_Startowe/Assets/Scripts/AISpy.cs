@@ -2,12 +2,13 @@ using UnityEngine;
 using UnityEngine.AI;
 
 // Szpieg sterowany przez AI (tryb gry "Snajper").
-// Udaje bota, powoli dryfuje w strone walizek, kradnie je (wtedy rusza sie po ludzku)
-// i czasem popelnia bledy - krotkie, plynne "ludzkie" przebiezki albo spozniona reakcja na panike.
+// Udaje bota i powoli dryfuje w strone walizki. Zeby ja zlapac, musi na chwile
+// wyjsc z roli (ludzkie siegniecie), potem niesie ja do furgonetki jak bot niosacy bagaz.
+// Czasem popelnia bledy: krotka plynna "ludzka" przebiezka albo spozniona reakcja na panike.
 [RequireComponent(typeof(NavMeshAgent))]
 public class AISpy : MonoBehaviour
 {
-    enum State { Blend, Steal, Slip }
+    enum State { Blend, Grab, Carry, Slip }
 
     NavMeshAgent agent;
     ProceduralAnimator anim;
@@ -18,12 +19,12 @@ public class AISpy : MonoBehaviour
     float nextTheftTime;
     float nextSlipTime;
     float slipTimer;
+    float grabTimer;
     bool isIdle;
     float idleTimer;
     float quirkTimer;
     float panicReactTimer = -1f;
     float panicTimer;
-    float grabTimer;
 
     void Start()
     {
@@ -57,61 +58,87 @@ public class AISpy : MonoBehaviour
 
         switch (state)
         {
-            case State.Blend: UpdateBlend(dt); break;
-            case State.Steal: UpdateSteal(dt); break;
+            case State.Blend: UpdateWalking(dt, false); break;
+            case State.Carry: UpdateWalking(dt, true); break;
+            case State.Grab: UpdateGrab(dt); break;
             case State.Slip: UpdateSlip(dt); break;
         }
     }
 
-    // --- Udawanie bota -------------------------------------------------------
+    // --- Chodzenie jak bot (z walizka albo bez) ---------------------------------
 
-    void UpdateBlend(float dt)
+    void UpdateWalking(float dt, bool carrying)
     {
         anim.roboticMovement = true;
-        anim.reaching = false;
 
-        if ((target == null || target.IsStolen) && Time.time >= nextTheftTime)
-            target = PickSuitcase();
-
-        if (target != null && panicTimer <= 0f &&
-            Vector3.Distance(transform.position, target.transform.position) < 1.1f)
+        if (carrying && member.HeldProp == null)
         {
-            BeginSteal();
-            return;
+            // Walizka wypadla z rak (albo zostala dostarczona) - wracamy do udawania
+            state = State.Blend;
+            if (target != null && target.IsStolen) target = null;
+            nextTheftTime = Time.time + Random.Range(4f, 10f);
+            carrying = false;
         }
 
-        if (panicTimer <= 0f && Time.time >= nextSlipTime)
+        if (!carrying)
         {
-            BeginSlip();
-            return;
+            if ((target == null || target.IsStolen || target.IsHeld) && Time.time >= nextTheftTime)
+                target = PickSuitcase();
+
+            if (target != null && panicTimer <= 0f && !target.IsHeld &&
+                Vector3.Distance(transform.position, target.transform.position) < 1.1f)
+            {
+                BeginGrab();
+                return;
+            }
+
+            if (panicTimer <= 0f && Time.time >= nextSlipTime)
+            {
+                BeginSlip();
+                return;
+            }
         }
 
         if (isIdle)
         {
             idleTimer -= dt;
             DoIdleQuirks(dt);
-            if (idleTimer <= 0f) { isIdle = false; NextLeg(); }
+            if (idleTimer <= 0f) { isIdle = false; NextLeg(carrying); }
         }
         else if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f)
         {
-            if (panicTimer > 0f) NextLeg();
-            else if (target != null && Vector3.Distance(transform.position, target.transform.position) < 3f) NextLeg();
-            else StartIdle();
+            bool closeToGoal = Vector3.Distance(transform.position, Goal(carrying)) < 6f;
+            if (panicTimer > 0f || (closeToGoal && HasGoal(carrying))) NextLeg(carrying);
+            else StartIdle(carrying);
         }
     }
 
-    // Kolejny odcinek marszu: jak bot, ale z lekkim ciazeniem w strone walizki
-    void NextLeg()
+    bool HasGoal(bool carrying) => carrying ? ExtractionZone.Nearest(transform.position) != null : target != null;
+
+    Vector3 Goal(bool carrying)
+    {
+        if (carrying)
+        {
+            var z = ExtractionZone.Nearest(transform.position);
+            return z != null ? z.transform.position : transform.position;
+        }
+        return target != null ? target.transform.position : transform.position;
+    }
+
+    // Kolejny odcinek marszu: jak bot, ale z lekkim ciazeniem do celu
+    void NextLeg(bool carrying)
     {
         Vector3 pos = transform.position;
-        if (target != null && panicTimer <= 0f)
+        if (HasGoal(carrying) && panicTimer <= 0f)
         {
-            Vector3 to = target.transform.position - pos;
+            Vector3 goal = Goal(carrying);
+            Vector3 to = goal - pos;
+            to.y = 0f;
             float dist = to.magnitude;
             if (dist < 6f)
             {
-                // Ostatnie metry - prosto do walizki (stajemy obok niej)
-                Vector3 spot = target.transform.position - to.normalized * 0.6f;
+                // Ostatnie metry - prosto do celu (przy walizce stajemy tuz obok)
+                Vector3 spot = carrying ? goal : goal - to.normalized * 0.6f;
                 if (NavMesh.SamplePosition(spot, out NavMeshHit hit, 1.5f, NavMesh.AllAreas))
                 {
                     agent.SetDestination(hit.position);
@@ -130,10 +157,11 @@ public class AISpy : MonoBehaviour
         if (GameConfig.RandomNavPoint(pos, 15f, out Vector3 w)) agent.SetDestination(w);
     }
 
-    void StartIdle()
+    void StartIdle(bool carrying = false)
     {
         isIdle = true;
-        idleTimer = Random.Range(1f, 4f);
+        // Z walizka postoje sa krotsze - ale nie zerowe, bo to wygladaloby podejrzanie
+        idleTimer = carrying ? Random.Range(0.6f, 2f) : Random.Range(1f, 4f);
         quirkTimer = Random.Range(0.4f, 1.5f);
     }
 
@@ -151,29 +179,29 @@ public class AISpy : MonoBehaviour
         float bestScore = float.MaxValue;
         foreach (var s in Suitcase.All)
         {
-            if (s == null || s.IsStolen) continue;
+            if (s == null || s.IsStolen || s.IsHeld) continue;
             float score = Vector3.Distance(transform.position, s.transform.position) + Random.Range(0f, 25f);
             if (score < bestScore) { bestScore = score; best = s; }
         }
         return best;
     }
 
-    // --- Kradziez - tu szpieg sie odslania ------------------------------------
+    // --- Lapanie walizki - tu szpieg sie odslania --------------------------------
 
-    void BeginSteal()
+    void BeginGrab()
     {
-        state = State.Steal;
+        state = State.Grab;
         isIdle = false;
         grabTimer = 0f;
         agent.isStopped = true;
         agent.ResetPath();
     }
 
-    void UpdateSteal(float dt)
+    void UpdateGrab(float dt)
     {
-        if (target == null || target.IsStolen || panicTimer > 0f)
+        if (target == null || target.IsStolen || target.IsHeld || panicTimer > 0f)
         {
-            EndSteal();
+            EndGrab(false);
             return;
         }
 
@@ -182,40 +210,29 @@ public class AISpy : MonoBehaviour
         if (to.sqrMagnitude > 0.01f)
             transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(to), dt * 8f);
 
-        anim.roboticMovement = false;
-        if (!anim.IsHolding)
+        anim.roboticMovement = false; // czlowiek siega plynnie - to widac
+        if (member.TryGrabProp(target.Prop))
         {
-            // Siegamy po raczke - jesli rece nie dosiegaja zbyt dlugo, rezygnujemy i wracamy pozniej
-            anim.reaching = true;
-            anim.hasReachTarget = true;
-            anim.reachTarget = target.GrabPoint;
-            anim.TryGrab(target.Col, target.Body);
-            grabTimer += dt;
-            if (grabTimer > 4f)
-            {
-                EndSteal();
-                nextTheftTime = Time.time + Random.Range(3f, 6f);
-            }
+            EndGrab(true);
             return;
         }
 
-        anim.reaching = false;
-        anim.hasReachTarget = false;
-        target.AddProgress(dt / GameConfig.AIStealTime, member);
-        if (target == null || target.IsStolen) EndSteal();
+        grabTimer += dt;
+        if (grabTimer > 4f)
+        {
+            EndGrab(false);
+            nextTheftTime = Time.time + Random.Range(3f, 6f);
+        }
     }
 
-    void EndSteal()
+    void EndGrab(bool success)
     {
-        anim.Release();
-        anim.reaching = false;
-        anim.hasReachTarget = false;
+        member.StopReaching();
         anim.roboticMovement = true;
         agent.isStopped = false;
-        target = null;
-        nextTheftTime = Time.time + Random.Range(12f, 28f);
-        state = State.Blend;
-        NextLeg();
+        state = success ? State.Carry : State.Blend;
+        if (!success) nextTheftTime = Mathf.Max(nextTheftTime, Time.time + Random.Range(5f, 12f));
+        NextLeg(success);
     }
 
     // --- Wpadka: krotki plynny, szybki "ludzki" marsz ---------------------------
@@ -258,8 +275,14 @@ public class AISpy : MonoBehaviour
 
     void StartPanic()
     {
-        if (state == State.Steal) EndSteal();
+        if (state == State.Grab) EndGrab(false);
         if (state == State.Slip) EndSlip();
+        // Czasem szpieg nie chce puscic walizki - jak boty zwykle rzucaja wszystko, to jest wpadka
+        if (member.HeldProp != null && Random.value < 0.5f)
+        {
+            member.DropProp();
+            state = State.Blend;
+        }
         panicTimer = GameConfig.PanicDuration * Random.Range(0.8f, 1.1f);
         agent.speed = GameConfig.BotPanicSpeed;
         anim.panicking = true;

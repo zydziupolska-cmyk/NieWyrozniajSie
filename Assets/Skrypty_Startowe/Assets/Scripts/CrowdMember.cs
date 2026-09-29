@@ -19,6 +19,56 @@ public class CrowdMember : MonoBehaviour
     public float NoiseSeed { get; private set; }
     public Vector3 TorsoPosition => Animator.TorsoTransform.position;
 
+    // --- Przedmioty w rekach ---------------------------------------------------
+
+    public Prop HeldProp
+    {
+        get
+        {
+            Rigidbody rb = Animator.HeldBody;
+            return rb != null ? rb.GetComponent<Prop>() : null;
+        }
+    }
+
+    // Wywolywac co klatke podczas siegania; zwraca true, gdy przedmiot jest juz w rekach
+    public bool TryGrabProp(Prop prop)
+    {
+        if (prop == null || IsDead) return false;
+        Animator.reaching = true;
+        Animator.hasReachTarget = true;
+        Animator.reachTarget = prop.GrabPoint;
+        if (!Animator.TryGrab(prop.Col, prop.Body)) return false;
+        prop.Holder = this;
+        if (prop.ReservedBy == this) prop.ReservedBy = null;
+        StopReaching();
+        return true;
+    }
+
+    public void StopReaching()
+    {
+        Animator.reaching = false;
+        Animator.hasReachTarget = false;
+    }
+
+    public void DropProp()
+    {
+        Prop held = HeldProp;
+        Animator.Release();
+        if (held != null && held.Holder == this) held.Holder = null;
+    }
+
+    // Rzut jak w Gang Beasts - do przodu i lekko w gore
+    public void ThrowProp(float speed = 7f)
+    {
+        Prop held = HeldProp;
+        if (held == null) return;
+        DropProp();
+        Vector3 fwd = Animator.TorsoTransform.forward;
+        fwd.y = 0f;
+        held.Body.AddForce(fwd.normalized * speed + Vector3.up * speed * 0.45f, ForceMode.VelocityChange);
+        held.Body.AddTorque(Random.insideUnitSphere * 5f, ForceMode.VelocityChange);
+    }
+
     void Awake()
     {
         Animator = GetComponent<ProceduralAnimator>();
@@ -50,9 +100,11 @@ public class CrowdMember : MonoBehaviour
         var cc = GetComponent<CharacterController>();
         if (cc != null) cc.enabled = false;
 
+        Prop held = HeldProp;
+        if (held != null && held.Holder == this) held.Holder = null;
         Animator.panicking = false;
-        Animator.reaching = false;
-        Animator.EnableRagdoll(hitDirection, hitBody, hitPoint);
+        StopReaching();
+        Animator.EnableRagdoll(hitDirection, hitBody, hitPoint); // wypuszcza przedmiot z rak
 
         if (GameManager.Instance != null) GameManager.Instance.OnCharacterKilled(this);
     }

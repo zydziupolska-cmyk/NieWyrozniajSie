@@ -86,6 +86,10 @@ public static class LevelBuilder
         foreach (var p in new[] { new Vector3(-7f, 0f, 9f), new Vector3(7f, 0f, -9f), new Vector3(-18f, 0f, -2f), new Vector3(18f, 0f, 2f) })
             BuildBench(level, p, Quaternion.Euler(0f, Random.value < 0.5f ? 0f : 90f, 0f));
 
+        // --- Furgonetki szpiegow po obu stronach placu ---
+        BuildVan(level, new Vector3(39f, 0f, 0f), -1f);
+        BuildVan(level, new Vector3(-39f, 0f, 0f), 1f);
+
         // --- Latarnie ---
         foreach (float lz in new[] { -24f, 24f, -38f, 38f })
             for (float x = -30f; x <= 30f; x += 20f)
@@ -182,6 +186,38 @@ public static class LevelBuilder
         LowPolyFactory.Box("LightR", car, new Vector3(0.6f, 0.7f, 2.1f), new Vector3(0.4f, 0.15f, 0.05f), new Color(1f, 0.95f, 0.75f), true);
         LowPolyFactory.Box("TailL", car, new Vector3(-0.6f, 0.7f, -2.1f), new Vector3(0.4f, 0.15f, 0.05f), new Color(0.8f, 0.1f, 0.1f), true);
         LowPolyFactory.Box("TailR", car, new Vector3(0.6f, 0.7f, -2.1f), new Vector3(0.4f, 0.15f, 0.05f), new Color(0.8f, 0.1f, 0.1f), true);
+    }
+
+    // Furgonetka z otwartymi tylnymi drzwiami. inward = kierunek (po osi X) do srodka parkingu.
+    static void BuildVan(Transform parent, Vector3 pos, float inward)
+    {
+        Quaternion rot = Quaternion.Euler(0f, inward > 0f ? 90f : -90f, 0f); // lokalne +Z = do srodka
+        var van = Group("Van", parent, pos, rot, new Vector3(2.2f, 2.4f, 5f), 1.2f).transform;
+        Color white = new Color(0.93f, 0.93f, 0.9f);
+        LowPolyFactory.Box("Body", van, new Vector3(0f, 1.35f, -0.4f), new Vector3(2.2f, 2.1f, 4.2f), white);
+        LowPolyFactory.Box("Hood", van, new Vector3(0f, 0.85f, -2.3f), new Vector3(2.1f, 1.1f, 0.8f), white);
+        LowPolyFactory.Box("Windshield", van, new Vector3(0f, 1.75f, -2.52f), new Vector3(1.9f, 0.7f, 0.05f), DarkGlass);
+        LowPolyFactory.Box("Stripe", van, new Vector3(0f, 1.2f, -0.4f), new Vector3(2.22f, 0.25f, 4.22f), new Color(0.2f, 0.4f, 0.75f));
+        LowPolyFactory.Box("Interior", van, new Vector3(0f, 1.4f, 1.71f), new Vector3(1.9f, 1.8f, 0.02f), new Color(0.05f, 0.05f, 0.06f));
+        // Otwarte drzwi
+        var doorL = LowPolyFactory.Box("DoorL", van, new Vector3(-1.45f, 1.35f, 2.2f), new Vector3(0.05f, 1.9f, 1.05f), white);
+        doorL.transform.localRotation = Quaternion.Euler(0f, -20f, 0f);
+        var doorR = LowPolyFactory.Box("DoorR", van, new Vector3(1.45f, 1.35f, 2.2f), new Vector3(0.05f, 1.9f, 1.05f), white);
+        doorR.transform.localRotation = Quaternion.Euler(0f, 20f, 0f);
+        foreach (float sx in new[] { -1f, 1f })
+            foreach (float sz in new[] { -1.7f, 1.2f })
+                LowPolyFactory.Box("Wheel", van, new Vector3(sx, 0.35f, sz), new Vector3(0.3f, 0.7f, 0.7f), Tyre);
+
+        // Strefa dostawy tuz za tylnymi drzwiami + slup swiatla widoczny z daleka
+        var zoneGo = new GameObject("ExtractionZone");
+        zoneGo.transform.SetParent(parent, false);
+        zoneGo.transform.position = pos + new Vector3(inward * 4.4f, 0f, 0f);
+        Color green = new Color(0.3f, 1f, 0.45f);
+        LowPolyFactory.Box("Pad", zoneGo.transform, new Vector3(0f, 0.015f, 0f), new Vector3(3.4f, 0.02f, 3.4f), green, true);
+        var beam = LowPolyFactory.Box("Beam", zoneGo.transform, new Vector3(0f, 7f, 0f), new Vector3(0.35f, 14f, 0.35f), green, true);
+        beam.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        var zone = zoneGo.AddComponent<ExtractionZone>();
+        zone.beam = beam.transform;
     }
 
     static void BuildKiosk(Transform parent, Vector3 pos)

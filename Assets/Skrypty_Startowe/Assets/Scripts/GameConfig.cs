@@ -11,8 +11,6 @@ public static class GameConfig
     public const float SpyHumanSpeed = 4.5f;
     public const float PanicDuration = 6f;
 
-    public const float PlayerStealTime = 1.5f;
-    public const float AIStealTime = 2.2f;
     public const float StealDistance = 1.7f;
 
     public const float RoundTime = 240f;
@@ -22,6 +20,8 @@ public static class GameConfig
     public const int AISniperAmmo = 4;
 
     public const float LotHalfSize = 40f;
+    public const int DecoySuitcases = 8;     // walizki podroznych - wygladaja jak cele
+    public const float PropsPerBot = 0.3f;   // kartony, torby, pacholki, worki, pilki
 
     // Ustawienia agenta wspolne dla botow i szpiegow AI - toporne, natychmiastowe skrety i starty
     public static void ConfigureBotAgent(NavMeshAgent agent)

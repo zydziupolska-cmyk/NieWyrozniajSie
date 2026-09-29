@@ -3,7 +3,7 @@ using UnityEngine.InputSystem;
 
 // Snajper sterowany przez gracza (widok FPP z dachu).
 // Mysz - rozgladanie, PPM - luneta, kolko - zmiana przyblizenia,
-// LPM - strzal, SHIFT (w lunecie) - wstrzymanie oddechu.
+// LPM - strzal, SHIFT (w lunecie) - wstrzymanie oddechu, Q - oznacz/odznacz podejrzanego.
 public class SniperController : MonoBehaviour
 {
     public Camera sniperCamera;
@@ -26,6 +26,8 @@ public class SniperController : MonoBehaviour
     private float boltTimer;
     private float breath = 1f;
     private Texture2D scopeTexture;
+    private readonly System.Collections.Generic.Dictionary<CrowdMember, GameObject> suspects =
+        new System.Collections.Generic.Dictionary<CrowdMember, GameObject>();
 
     void OnEnable()
     {
@@ -36,6 +38,7 @@ public class SniperController : MonoBehaviour
         currentFOV = normalFOV;
         boltTimer = 0f;
         breath = 1f;
+        suspects.Clear();
     }
 
     void OnDisable()
@@ -48,6 +51,7 @@ public class SniperController : MonoBehaviour
         if (GameManager.Instance != null && !GameManager.Instance.IsPlaying) return;
         HandleAiming();
         HandleShooting();
+        HandleMarking();
     }
 
     void HandleAiming()
@@ -106,6 +110,28 @@ public class SniperController : MonoBehaviour
             boltTimer = boltTime;
             SoundFx.Play2D(SoundFx.Reload, 0.8f);
         }
+    }
+
+    // Oznaczanie podejrzanych - pomaranczowy znacznik nad glowa (tylko pomoc dla pamieci snajpera)
+    void HandleMarking()
+    {
+        if (Keyboard.current == null || !Keyboard.current.qKey.wasPressedThisFrame) return;
+        if (!Physics.Raycast(transform.position, transform.forward, out RaycastHit hit, 400f, ProceduralAnimator.ShootableMask, QueryTriggerInteraction.Ignore)) return;
+
+        RagdollPart part = hit.collider.GetComponent<RagdollPart>();
+        CrowdMember m = part != null && part.owner != null ? part.owner.GetComponent<CrowdMember>() : null;
+        if (m == null) return;
+
+        if (suspects.TryGetValue(m, out GameObject marker) && marker != null)
+        {
+            Destroy(marker);
+            suspects.Remove(m);
+        }
+        else
+        {
+            suspects[m] = RevealMarker.Attach(m.Animator.TorsoTransform, m.transform, new Color(1f, 0.55f, 0.1f), 0.18f);
+        }
+        SoundFx.Play2D(SoundFx.Click, 0.6f);
     }
 
     void OnGUI()

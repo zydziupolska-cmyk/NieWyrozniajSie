@@ -4,7 +4,9 @@ using UnityEngine.InputSystem;
 // Szpieg sterowany przez gracza (widok TPP).
 // SHIFT  - tryb NPC: kanciasty ruch identyczny jak u botow
 // SPACJA - bieg w panice z rekami w gorze (nasladowanie tlumu)
-// E      - zlap walizke rekami i trzymaj, az zniknie pod plaszczem (tylko poza trybem NPC!)
+// E      - przytrzymaj, zeby zlapac przedmiot (TYLKO jako czlowiek, bez SHIFT);
+//          zlapany niesiesz dalej (takze w trybie NPC), ponowne E = odloz
+// LPM    - rzut trzymanym przedmiotem
 [RequireComponent(typeof(CharacterController))]
 public class SpyController : MonoBehaviour
 {
@@ -24,12 +26,13 @@ public class SpyController : MonoBehaviour
     public bool isNpcMode = false;
     public bool isPanicRunning = false;
 
-    public Suitcase NearbySuitcase { get; private set; }
-    public bool IsStealing => IsHolding || IsReaching;
-    public bool IsHolding => heldSuitcase != null;
+    public Prop NearbyProp { get; private set; }
+    public Prop HeldProp => member != null ? member.HeldProp : null;
+    public bool IsHolding => HeldProp != null;
+    public bool IsHoldingTarget => HeldProp != null && HeldProp.IsTarget;
     public bool IsReaching { get; private set; }
 
-    private Suitcase heldSuitcase;
+    private bool grabKeyReleased;
     public Transform CameraTransform { get; set; }
 
     void Start()
@@ -48,40 +51,36 @@ public class SpyController : MonoBehaviour
         isNpcMode = kb != null && kb.leftShiftKey.isPressed;
         isPanicRunning = kb != null && kb.spaceKey.isPressed;
 
-        bool wantGrab = !isNpcMode && kb != null && kb.eKey.isPressed;
+        bool ePressed = kb != null && kb.eKey.isPressed;
+        bool eDown = kb != null && kb.eKey.wasPressedThisFrame;
+        bool throwDown = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
 
-        // Puszczenie E / wejscie w tryb NPC = walizka spada na ziemie
-        if (heldSuitcase != null && (!wantGrab || !animator.IsHolding))
+        if (IsHolding)
         {
-            animator.Release();
-            heldSuitcase = null;
+            if (!ePressed) grabKeyReleased = true;
+            if (throwDown) member.ThrowProp();
+            else if (eDown && grabKeyReleased) member.DropProp();
         }
 
-        NearbySuitcase = heldSuitcase != null ? heldSuitcase : Suitcase.Nearest(transform.position, GameConfig.StealDistance);
-        IsReaching = heldSuitcase == null && wantGrab && NearbySuitcase != null;
+        NearbyProp = IsHolding ? HeldProp : Prop.Nearest(transform.position, GameConfig.StealDistance, true);
+        // Lapanie to "zadanie" - w trybie NPC sie nie da
+        IsReaching = !IsHolding && ePressed && !isNpcMode && NearbyProp != null;
 
         animator.roboticMovement = isNpcMode;
-        animator.panicking = isPanicRunning && !IsStealing;
-        animator.reaching = IsReaching;
-        animator.hasReachTarget = IsReaching;
-        if (IsReaching) animator.reachTarget = NearbySuitcase.GrabPoint;
+        animator.panicking = isPanicRunning && !IsReaching;
 
         if (IsReaching)
         {
-            // Rece szukaja raczki; mozna lekko dreptac, zeby dosiegnac
-            FaceTowards(NearbySuitcase.transform.position);
-            if (animator.TryGrab(NearbySuitcase.Col, NearbySuitcase.Body)) heldSuitcase = NearbySuitcase;
+            // Rece szukaja przedmiotu; mozna lekko dreptac, zeby dosiegnac
+            FaceTowards(NearbyProp.transform.position);
+            if (member.TryGrabProp(NearbyProp)) grabKeyReleased = false;
             HandleMovement(kb, 0.35f, false);
-        }
-        else if (heldSuitcase != null)
-        {
-            // Trzymamy walizke - chowanie jej trwa chwile, mozna przy tym isc
-            heldSuitcase.AddProgress(Time.deltaTime / GameConfig.PlayerStealTime, member);
-            HandleMovement(kb, 0.6f, true);
         }
         else
         {
-            HandleMovement(kb, 1f, true);
+            member.StopReaching();
+            // Z walizka idzie sie troche wolniej, ale tryb NPC zachowuje predkosc bota
+            HandleMovement(kb, IsHolding && !isNpcMode ? 0.8f : 1f, true);
         }
     }
 

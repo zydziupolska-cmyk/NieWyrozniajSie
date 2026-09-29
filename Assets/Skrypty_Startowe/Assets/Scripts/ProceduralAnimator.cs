@@ -432,6 +432,7 @@ public class ProceduralAnimator : MonoBehaviour
     {
         if (IsDead || torso == null) return;
         if (grabJoints.Count > 0 && heldBody == null) CleanupGrab(); // przedmiot zniknal (ukradziony)
+        if (IsHolding && grabbingHands.Count < 2) TryGrab(heldCollider, heldBody); // druga reka dolacza
         if (appliedRobotic != roboticMovement || appliedArmGrip != ArmGrip) ApplyDrives();
 
         float dt = Time.fixedDeltaTime;
@@ -600,6 +601,8 @@ public class ProceduralAnimator : MonoBehaviour
                 heldBody = body;
                 heldCollider = target;
                 foreach (var part in parts) Physics.IgnoreCollision(part.rb.GetComponent<Collider>(), target, true);
+                // Niesiony przedmiot nie moze blokowac niewidzialnego kontrolera gracza
+                if (characterController != null) Physics.IgnoreCollision(characterController, target, true);
             }
             var joint = body.gameObject.AddComponent<FixedJoint>();
             joint.connectedBody = hand.rb;
@@ -613,9 +616,22 @@ public class ProceduralAnimator : MonoBehaviour
     public void Release()
     {
         foreach (var j in grabJoints) if (j != null) Destroy(j);
-        if (heldCollider != null)
-            foreach (var part in parts) Physics.IgnoreCollision(part.rb.GetComponent<Collider>(), heldCollider, false);
+        // Kolizje z cialem wracaja z opoznieniem - inaczej upuszczony/rzucony przedmiot
+        // "wybuchalby" z rak, bo w chwili puszczenia nachodzi na dlonie
+        if (heldCollider != null && isActiveAndEnabled) StartCoroutine(RestoreCollisions(heldCollider, 0.4f));
         CleanupGrab();
+    }
+
+    System.Collections.IEnumerator RestoreCollisions(Collider target, float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (target == null || IsHolding && heldCollider == target) yield break;
+        foreach (var part in parts)
+        {
+            var c = part.rb != null ? part.rb.GetComponent<Collider>() : null;
+            if (c != null) Physics.IgnoreCollision(c, target, false);
+        }
+        if (characterController != null) Physics.IgnoreCollision(characterController, target, false);
     }
 
     void CleanupGrab()

@@ -129,7 +129,20 @@ public class GameManager : MonoBehaviour
 
         // Tlo menu: sam tlum spacerujacy po parkingu
         int n = Mathf.Min(botCount, 80);
+        SpawnProps(Mathf.RoundToInt(n * GameConfig.PropsPerBot), 4);
         for (int i = 0; i < n; i++) SpawnBot();
+    }
+
+    // Przedmioty do noszenia: kartony, torby, pacholki, worki, pilki i walizki-wabiki
+    void SpawnProps(int count, int decoys)
+    {
+        PropType[] common = { PropType.Box, PropType.Box, PropType.Box, PropType.Bag, PropType.Bag, PropType.Cone, PropType.TrashBag, PropType.Ball };
+        for (int i = 0; i < count + decoys; i++)
+        {
+            PropType type = i < decoys ? PropType.Suitcase : common[Random.Range(0, common.Length)];
+            Vector3 pos = RandomSpawnPoint(type == PropType.Suitcase ? 6f : 0f);
+            Prop.Create(type, pos + Vector3.up * 0.02f, Quaternion.Euler(0f, Random.Range(0f, 360f), 0f), roundRoot.transform);
+        }
     }
 
     void StartRound(Mode mode)
@@ -146,6 +159,7 @@ public class GameManager : MonoBehaviour
         foreach (var spot in level.suitcaseSpots)
             Suitcase.Create(spot.position, spot.rotation, roundRoot.transform);
         suitcasesTotal = level.suitcaseSpots.Count;
+        SpawnProps(Mathf.Clamp(Mathf.RoundToInt(botCount * GameConfig.PropsPerBot), 10, 80), GameConfig.DecoySuitcases);
 
         for (int i = 0; i < botCount; i++) SpawnBot();
 
@@ -287,20 +301,49 @@ public class GameManager : MonoBehaviour
         CheckEnd();
     }
 
+    public void OnSuitcasePicked(Suitcase s, CrowdMember holder)
+    {
+        if (CurrentState != State.Playing) return;
+        if (CurrentMode == Mode.Spy)
+        {
+            if (holder != null && holder.isPlayer)
+                ShowMessage("Masz walizkę! Zanieś ją do furgonetki (zielone światło).", new Color(0.4f, 1f, 0.4f), 4f);
+        }
+        else
+        {
+            ShowMessage("Ktoś podniósł walizkę! Która to teraz?", new Color(1f, 0.6f, 0.2f), 3f);
+            SpawnFlashMarker(s.transform.position, 3f);
+        }
+        if (aiSniper != null) aiSniper.OnSuitcasePicked(s.transform.position);
+    }
+
+    public void OnSuitcaseDropped(Suitcase s)
+    {
+        if (CurrentState != State.Playing || s == null) return;
+        if (CurrentMode == Mode.Sniper) ShowMessage("Walizka znów leży na ziemi.", Color.white, 2.5f);
+        else if (playerSpy != null && !playerSpy.IsDead && Vector3.Distance(playerSpy.transform.position, s.transform.position) < 3f)
+            ShowMessage("Walizka wypadła z rąk!", new Color(1f, 0.6f, 0.2f), 2.5f);
+    }
+
+    void SpawnFlashMarker(Vector3 pos, float seconds)
+    {
+        var marker = LowPolyFactory.Box("FlashMarker", roundRoot.transform, pos + Vector3.up * 6f,
+            new Vector3(0.4f, 12f, 0.4f), new Color(1f, 0.2f, 0.1f), true);
+        Destroy(marker, seconds);
+    }
+
     public void OnSuitcaseStolen(Suitcase s, CrowdMember thief)
     {
         if (CurrentState != State.Playing) return;
         suitcasesStolen++;
         if (CurrentMode == Mode.Spy)
         {
-            ShowMessage("Walizka zdobyta! (" + suitcasesStolen + "/" + suitcasesTotal + ")", new Color(0.4f, 1f, 0.4f), 3f);
+            ShowMessage("Walizka w furgonetce! (" + suitcasesStolen + "/" + suitcasesTotal + ")", new Color(0.4f, 1f, 0.4f), 3f);
         }
         else
         {
-            ShowMessage("Walizka skradziona! (" + suitcasesStolen + "/" + suitcasesTotal + ") — szpieg był tuż obok!", new Color(1f, 0.4f, 0.3f), 4f);
-            var marker = LowPolyFactory.Box("TheftMarker", roundRoot.transform, s.transform.position + Vector3.up * 6f,
-                new Vector3(0.4f, 12f, 0.4f), new Color(1f, 0.2f, 0.1f), true);
-            Destroy(marker, 5f);
+            ShowMessage("Walizka dotarła do furgonetki! (" + suitcasesStolen + "/" + suitcasesTotal + ") — szpieg był tuż obok!", new Color(1f, 0.4f, 0.3f), 4f);
+            SpawnFlashMarker(s.transform.position, 5f);
         }
         if (aiSniper != null) aiSniper.OnSuitcaseStolen(s.transform.position);
         CheckEnd();
@@ -398,7 +441,7 @@ public class GameManager : MonoBehaviour
 
     // --- Interfejs (IMGUI - dziala bez zadnych dodatkowych pakietow) ------------------------------
 
-    GUIStyle titleStyle, bigStyle, textStyle, smallStyle, buttonStyle;
+    GUIStyle titleStyle, bigStyle, textStyle, smallStyle, buttonStyle, hintStyle;
     float uiScale;
 
     void EnsureStyles()
@@ -411,6 +454,7 @@ public class GameManager : MonoBehaviour
         bigStyle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(40 * s), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true };
         textStyle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(24 * s), alignment = TextAnchor.UpperLeft, wordWrap = true, richText = true };
         smallStyle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(18 * s), alignment = TextAnchor.UpperLeft, wordWrap = true, richText = true };
+        hintStyle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(24 * s), alignment = TextAnchor.MiddleCenter };
         buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = Mathf.RoundToInt(30 * s), fontStyle = FontStyle.Bold };
     }
 
@@ -461,18 +505,20 @@ public class GameManager : MonoBehaviour
         if (GUI.Button(new Rect(cx + 20 * s, y, bw, bh), "GRAJ JAKO SNAJPER", buttonStyle)) StartRound(Mode.Sniper);
 
         string spyHelp =
-            "<b>Cel:</b> ukradnij " + GameConfig.SuitcaseCount + " walizki, zanim snajper Cię wypatrzy.\n\n" +
+            "<b>Cel:</b> donieś " + GameConfig.SuitcaseCount + " walizki (żółte znaczniki) do furgonetki (zielone światło).\n\n" +
             "<b>WSAD</b> – ruch, <b>mysz</b> – kamera\n" +
             "<b>SHIFT</b> (trzymaj) – TRYB NPC: ruszasz się jak bot\n" +
             "<b>SPACJA</b> – bieg w panice z rękami w górze\n" +
-            "<b>E</b> (trzymaj) – złap walizkę rękami i trzymaj (NIE w trybie NPC)\n\n" +
-            "Czerwony laser pokazuje, gdzie patrzy snajper. Gdy tłum wpadnie w panikę – panikuj razem z nim!";
+            "<b>E</b> (trzymaj) – złap przedmiot (NIE w trybie NPC), <b>E</b> – odłóż, <b>LPM</b> – rzuć\n\n" +
+            "Boty też noszą kartony, torby i walizki podróżnych. Złap walizkę jako człowiek, a potem nieś ją jak bot. " +
+            "Czerwony laser pokazuje, gdzie patrzy snajper.";
         string sniperHelp =
             "<b>Cel:</b> zastrzel " + GameConfig.AISpyCount + " szpiegów, mając tylko " + GameConfig.PlayerSniperAmmo + " naboi.\n\n" +
             "<b>Mysz</b> – celowanie, <b>PPM</b> – luneta\n" +
             "<b>Kółko</b> – przybliżenie, <b>LPM</b> – strzał\n" +
-            "<b>SHIFT</b> w lunecie – wstrzymanie oddechu\n\n" +
-            "Szukaj płynnych, ludzkich ruchów, grzebania przy walizkach i spóźnionej reakcji na panikę. " +
+            "<b>SHIFT</b> w lunecie – oddech, <b>Q</b> – oznacz podejrzanego\n\n" +
+            "Szpiedzy niosą walizki do furgonetek, udając podróżnych. Wypatruj płynnego, ludzkiego sięgania, " +
+            "spóźnionej reakcji na panikę i kogoś, kto w panice nie puszcza walizki. " +
             "Pudło albo zabity bot wywołuje panikę tłumu.";
         Label(new Rect(cx - bw - 20 * s, y + bh + 20 * s, bw, 420 * s), spyHelp, textStyle, Color.white);
         Label(new Rect(cx + 20 * s, y + bh + 20 * s, bw, 420 * s), sniperHelp, textStyle, Color.white);
@@ -524,32 +570,37 @@ public class GameManager : MonoBehaviour
                 if (CrowdMember.PanicActive && !playerSpyCtrl.isPanicRunning && flash)
                     Label(new Rect(0, 150 * s, w, 60 * s), "PANIKA! Trzymaj SPACJĘ i uciekaj jak boty!", bigStyle, new Color(1f, 0.6f, 0.2f));
 
-                // Kradziez
-                Suitcase near = playerSpyCtrl.NearbySuitcase;
-                if (near != null)
+                // Przedmioty i walizki
+                Prop near = playerSpyCtrl.NearbyProp;
+                string prompt = null, hint = null;
+                if (playerSpyCtrl.IsHolding)
                 {
-                    string prompt = playerSpyCtrl.isNpcMode ? "Puść SHIFT, żeby móc złapać walizkę"
-                                  : playerSpyCtrl.IsHolding ? "Masz ją! Trzymaj E, aż schowasz walizkę..."
-                                  : playerSpyCtrl.IsReaching ? "Sięgasz... podejdź bliżej, jeśli ręce nie dosięgają"
-                                  : "Przytrzymaj E, aby złapać walizkę";
-                    Label(new Rect(0, h * 0.62f, w, 50 * s), prompt, bigStyle, Color.white);
-                    if (playerSpyCtrl.IsHolding)
-                    {
-                        Rect bar = new Rect(w / 2f - 200 * s, h * 0.62f + 56 * s, 400 * s, 20 * s);
-                        Fill(bar, new Color(0f, 0f, 0f, 0.5f));
-                        Fill(new Rect(bar.x, bar.y, bar.width * near.Progress, bar.height), new Color(1f, 0.85f, 0.2f));
-                    }
+                    var zone = ExtractionZone.Nearest(playerSpy.transform.position);
+                    float dist = zone != null ? Vector3.Distance(zone.transform.position, playerSpy.transform.position) : 0f;
+                    prompt = playerSpyCtrl.IsHoldingTarget
+                        ? "Niesiesz WALIZKĘ! Furgonetka: " + Mathf.RoundToInt(dist) + " m"
+                        : "Niesiesz: " + near.DisplayName;
+                    hint = "E – odłóż · LPM – rzuć · z SHIFT niesiesz jak bot";
                 }
+                else if (near != null)
+                {
+                    prompt = playerSpyCtrl.isNpcMode ? "Puść SHIFT, żeby podnieść: " + near.DisplayName
+                           : playerSpyCtrl.IsReaching ? "Sięgasz... podejdź bliżej, jeśli ręce nie dosięgają"
+                           : "Przytrzymaj E, aby podnieść: " + near.DisplayName;
+                }
+                if (prompt != null) Label(new Rect(0, h * 0.62f, w, 50 * s), prompt, bigStyle,
+                    playerSpyCtrl.IsHoldingTarget ? new Color(1f, 0.85f, 0.3f) : Color.white);
+                if (hint != null) Label(new Rect(0, h * 0.62f + 52 * s, w, 40 * s), hint, hintStyle, new Color(1f, 1f, 1f, 0.8f));
             }
 
             Label(new Rect(20 * s, h - 60 * s, 900 * s, 50 * s),
-                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E łap walizkę · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
+                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E łap/odłóż · LPM rzut · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
         }
         else
         {
             int alive = spies.Count - DeadSpies();
             Label(new Rect(20 * s, 16 * s, 700 * s, 200 * s),
-                "<b>SNAJPER</b>   Czas: " + time + "\nSkradzione walizki: " + suitcasesStolen + "/" + suitcasesTotal +
+                "<b>SNAJPER</b>   Czas: " + time + "\nWalizki w furgonetce: " + suitcasesStolen + "/" + suitcasesTotal +
                 "\nSzpiedzy w tłumie: " + alive + "/" + spies.Count, textStyle, Color.white);
 
             string ammo = "Naboje: " + sniper.ammo + "/" + GameConfig.PlayerSniperAmmo;
@@ -566,7 +617,7 @@ public class GameManager : MonoBehaviour
             }
 
             Label(new Rect(20 * s, h - 60 * s, 900 * s, 50 * s),
-                "Mysz celowanie · PPM luneta · Kółko zoom · LPM strzał · SHIFT oddech · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
+                "Mysz celowanie · PPM luneta · Kółko zoom · LPM strzał · SHIFT oddech · Q oznacz · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
         }
     }
 

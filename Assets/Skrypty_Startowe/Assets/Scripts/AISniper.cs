@@ -52,7 +52,18 @@ public class AISniper : MonoBehaviour
         return m != null && suspicion.TryGetValue(m, out float s) ? s : 0f;
     }
 
-    // Walizka znikla - snajper wie, ze ktos stal obok
+    // Ktos podniosl walizke-cel - snajper widzi, ze znacznik zniknal
+    public void OnSuitcasePicked(Vector3 position)
+    {
+        foreach (var m in CrowdMember.All)
+        {
+            if (m.IsDead) continue;
+            if (Vector3.Distance(m.transform.position, position) < 3f) Add(m, 0.35f);
+        }
+        observeTimer = Mathf.Min(observeTimer, 0.3f);
+    }
+
+    // Walizka dotarla do furgonetki - snajper wie, ze ktos stal obok
     public void OnSuitcaseStolen(Vector3 position)
     {
         foreach (var m in CrowdMember.All)
@@ -134,7 +145,15 @@ public class AISniper : MonoBehaviour
         float e = 0f;
 
         if (!a.roboticMovement && speed > 0.3f) e += 1.3f;        // plynny, ludzki ruch
-        if (a.reaching || a.IsHolding) e += 2.5f;                 // siega po walizke albo ja trzyma
+        // Boty tez podnosza rzeczy - ale toporne. Plynne, ludzkie siegniecie to wpadka.
+        if (a.reaching) e += a.roboticMovement ? 0.1f : 2.2f;
+        Prop held = m.HeldProp;
+        if (held != null && held.LooksLikeSuitcase)
+        {
+            e += 0.3f;                                             // niesie walizke (moze byc podrozny)
+            var zone = ExtractionZone.Nearest(m.transform.position);
+            if (zone != null && Vector3.Distance(zone.transform.position, m.transform.position) < 9f) e += 0.9f; // i idzie do furgonetki!
+        }
         if (panic)
         {
             if (!a.panicking) e += 0.9f;                           // spokojny, gdy wszyscy wariuja
@@ -178,10 +197,17 @@ public class AISniper : MonoBehaviour
         }
         else if (r < 0.75f)
         {
-            // Ktos krecacy sie przy walizce
+            // Ktos przy lezacej walizce, ktos z walizka w rekach albo przy furgonetce
             var near = new List<CrowdMember>();
             foreach (var m in alive)
-                if (Suitcase.Nearest(m.transform.position, 7f) != null) near.Add(m);
+            {
+                Prop held = m.HeldProp;
+                var zone = ExtractionZone.Nearest(m.transform.position);
+                if (Suitcase.NearestResting(m.transform.position, 7f) != null ||
+                    (held != null && held.LooksLikeSuitcase) ||
+                    (zone != null && Vector3.Distance(zone.transform.position, m.transform.position) < 8f))
+                    near.Add(m);
+            }
             if (near.Count > 0) { CurrentTarget = near[Random.Range(0, near.Count)]; return; }
         }
         CurrentTarget = alive[Random.Range(0, alive.Count)];
