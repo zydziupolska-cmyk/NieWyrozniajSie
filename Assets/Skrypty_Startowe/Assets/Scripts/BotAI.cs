@@ -2,7 +2,9 @@ using UnityEngine;
 using UnityEngine.AI;
 
 // Bezmyslny bot: chodzi w losowe miejsca, staje, robi kanciaste obroty w miejscu,
-// czasem podnosi lezacy przedmiot, nosi go i odklada gdzies indziej.
+// czasem podnosi lezacy przedmiot, nosi go i odklada gdzies indziej, siada na lawce,
+// staje w kolejce, zaglada do auta albo gada w grupce. W czasie postoju gra na telefonie,
+// drapie sie po glowie albo macha - szpieg musi umiec to wszystko nasladowac.
 // Po strzale wpada w panike: rece w gore, bieg 2x szybciej, zwykle upuszcza to, co niesie.
 [RequireComponent(typeof(NavMeshAgent))]
 public class BotAI : MonoBehaviour
@@ -11,9 +13,11 @@ public class BotAI : MonoBehaviour
     public float minIdleTime = 1.5f;
     public float maxIdleTime = 6f;
     [Tooltip("Szansa, ze po postoju bot pojdzie cos podniesc.")]
-    public float fetchChance = 0.3f;
+    public float fetchChance = 0.2f;
+    [Tooltip("Szansa, ze po postoju bot pojdzie cos robic (lawka, kolejka, grupka, zagladanie).")]
+    public float habitChance = 0.4f;
 
-    enum Activity { Wander, Fetch, Carry }
+    enum Activity { Wander, Fetch, Carry, Habit }
 
     private NavMeshAgent agent;
     private ProceduralAnimator animator;
@@ -27,6 +31,10 @@ public class BotAI : MonoBehaviour
     private Prop prop;
     private float activityTimer;
     private bool reachingNow;
+    private ActivitySpot spot;
+    private bool atSpot;
+    private float chatToggle;
+    private float idleEmoteTimer;
 
     public bool IsPanicking => panicTimer > 0f;
 
@@ -59,6 +67,7 @@ public class BotAI : MonoBehaviour
             }
         }
 
+        if (activity == Activity.Habit && UpdateHabit(dt)) return;
         if (activity == Activity.Fetch && UpdateFetch(dt)) return;
         if (activity == Activity.Carry)
         {
@@ -69,7 +78,12 @@ public class BotAI : MonoBehaviour
         if (isIdle)
         {
             idleTimer -= dt;
-            DoIdleQuirks();
+            if (idleEmoteTimer > 0f)
+            {
+                idleEmoteTimer -= dt;
+                if (idleEmoteTimer <= 0f) animator.emote = Emote.None;
+            }
+            else DoIdleQuirks();
             if (idleTimer <= 0f)
             {
                 isIdle = false;
@@ -86,16 +100,110 @@ public class BotAI : MonoBehaviour
     // Po postoju: odloz niesiona rzecz, idz cos podniesc albo po prostu dalej spaceruj
     void DecideNext()
     {
+        animator.emote = Emote.None;
+        idleEmoteTimer = 0f;
         if (activity == Activity.Carry && activityTimer <= 0f)
         {
             member.DropProp();
             activity = Activity.Wander;
         }
-        else if (activity == Activity.Wander && Random.value < fetchChance && TryStartFetch())
+        else if (activity == Activity.Wander)
         {
-            return;
+            float r = Random.value;
+            if (r < fetchChance && TryStartFetch()) return;
+            if (r >= fetchChance && r < fetchChance + habitChance && TryStartHabit()) return;
         }
         SetNewDestination();
+    }
+
+    // --- Nawyki: lawka, kolejka, zagladanie, grupka ------------------------------------
+
+    bool TryStartHabit()
+    {
+        var s = ActivitySpot.FindFree(transform.position, 25f);
+        if (s == null) return false;
+        GoToSpot(s);
+        activity = Activity.Habit;
+        return true;
+    }
+
+    void GoToSpot(ActivitySpot s)
+    {
+        if (spot != null && spot.occupant == member) spot.occupant = null;
+        spot = s;
+        spot.occupant = member;
+        atSpot = false;
+        activityTimer = 25f; // limit na dojscie
+        animator.emote = Emote.None;
+        animator.bodyOffset = Vector3.zero;
+        agent.isStopped = false;
+        agent.SetDestination(spot.standPoint);
+    }
+
+    // Zwraca true, gdy bot jest zajety nawykiem (reszta Update pomijana)
+    bool UpdateHabit(float dt)
+    {
+        activityTimer -= dt;
+        if (spot == null || spot.occupant != member || panicTimer > 0f)
+        {
+            EndHabit();
+            return false;
+        }
+
+        if (!atSpot)
+        {
+            if (activityTimer <= 0f) { EndHabit(); return false; }
+            if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.15f)
+            {
+                atSpot = true;
+                agent.isStopped = true;
+                agent.ResetPath();
+                animator.bodyOffset = spot.bodyOffset;
+                animator.emote = spot.Emote;
+                chatToggle = Random.Range(1.5f, 4f);
+                switch (spot.kind)
+                {
+                    case SpotKind.Bench: activityTimer = Random.Range(8f, 25f); break;
+                    case SpotKind.Peek: activityTimer = Random.Range(3f, 7f); break;
+                    case SpotKind.Chat: activityTimer = Random.Range(6f, 16f); break;
+                    default: activityTimer = spot.nextInQueue == null ? Random.Range(3f, 6f) : 25f; break;
+                }
+            }
+            return true;
+        }
+
+        transform.rotation = Quaternion.LookRotation(spot.facing);
+
+        if (spot.kind == SpotKind.Queue && spot.nextInQueue != null && spot.nextInQueue.IsFree)
+        {
+            GoToSpot(spot.nextInQueue); // kolejka sie przesuwa
+            return true;
+        }
+        if (spot.kind == SpotKind.Chat)
+        {
+            // Raz mowi (gestykuluje), raz slucha
+            chatToggle -= dt;
+            if (chatToggle <= 0f)
+            {
+                chatToggle = Random.Range(1.5f, 4f);
+                animator.emote = animator.emote == Emote.Chat ? Emote.None : Emote.Chat;
+            }
+        }
+
+        if (activityTimer <= 0f) { EndHabit(); return false; }
+        return true;
+    }
+
+    void EndHabit()
+    {
+        if (spot != null && spot.occupant == member) spot.occupant = null;
+        spot = null;
+        atSpot = false;
+        animator.emote = Emote.None;
+        animator.bodyOffset = Vector3.zero;
+        if (agent.isOnNavMesh) agent.isStopped = false;
+        if (activity == Activity.Habit) activity = Activity.Wander;
+        StartIdle();
     }
 
     bool TryStartFetch()
@@ -189,6 +297,12 @@ public class BotAI : MonoBehaviour
         isIdle = true;
         idleTimer = Random.Range(minIdleTime, maxIdleTime);
         quirkTimer = Random.Range(0.4f, 1.5f);
+
+        // Drobne czynnosci w czasie postoju
+        float r = Random.value;
+        if (r < 0.15f) { animator.emote = Emote.Phone; idleEmoteTimer = idleTimer; }
+        else if (r < 0.22f) { animator.emote = Emote.ScratchHead; idleEmoteTimer = Random.Range(1.5f, 3f); }
+        else if (r < 0.27f) { animator.emote = Emote.Wave; idleEmoteTimer = Random.Range(1.2f, 2.2f); }
     }
 
     // "Glitche" botow: nagle obroty o 90 stopni w miejscu
@@ -216,6 +330,9 @@ public class BotAI : MonoBehaviour
     {
         if (agent == null || !agent.isOnNavMesh) return;
         if (activity == Activity.Fetch) AbortFetch();
+        if (activity == Activity.Habit) EndHabit();
+        animator.emote = Emote.None;
+        idleEmoteTimer = 0f;
         // Wiekszosc botow w panice rzuca wszystko i ucieka
         if (member.HeldProp != null && Random.value < 0.7f)
         {

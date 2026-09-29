@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
+public enum Emote { None, Wave, ScratchHead, Phone, Sit, SitGround, Chat, Peek }
+
 // Active Ragdoll w stylu Human Fall Flat.
 // Obiekt z tym skryptem (bot z NavMeshAgent albo szpieg z CharacterController)
 // jest niewidzialnym "kontrolerem". Fizyczne cialo z jointow podaza za nim
@@ -20,6 +22,10 @@ public class ProceduralAnimator : MonoBehaviour
     [Tooltip("Punkt w swiecie, do ktorego siegaja rece (np. raczka walizki).")]
     public Vector3 reachTarget;
     public bool hasReachTarget;
+    [Tooltip("Czynnosc/emotka: machanie, telefon, siedzenie, rozmowa...")]
+    public Emote emote;
+    [Tooltip("Przesuniecie ciala wzgledem kontrolera w swiecie (np. siedzisko lawki za plecami).")]
+    public Vector3 bodyOffset;
     [Tooltip("Jak blisko musi byc dlon, zeby zlapac przedmiot.")]
     public float grabDistance = 0.22f;
 
@@ -452,6 +458,7 @@ public class ProceduralAnimator : MonoBehaviour
         if (IsHolding) AnimateCarry(ref lean);
         else if (panicking) AnimatePanicArms();
         else if (reaching) AnimateReach(ref lean, ref bob);
+        else if (emote != Emote.None) AnimateEmote(ref lean, ref bob);
 
         Balance(rootVel, bob, lean, roll);
     }
@@ -543,6 +550,78 @@ public class ProceduralAnimator : MonoBehaviour
         Vector3 side = torso.rb.transform.right * 0.08f;
         AimArm(upperArmL, foreArmL, reachTarget - side);
         AimArm(upperArmR, foreArmR, reachTarget + side);
+    }
+
+    // Emotki i czynnosci - boty robia je toporne (skokowo), ludzie plynnie
+    void AnimateEmote(ref float lean, ref float bob)
+    {
+        float t = Time.time;
+        float Osc(float speed, float offset = 0f) => roboticMovement ? Mathf.Round(Mathf.Sin(t * speed + offset)) : Mathf.Sin(t * speed + offset);
+
+        switch (emote)
+        {
+            case Emote.Wave:
+                SetTarget(upperArmR, Quaternion.Euler(-150f, 0f, 20f + Osc(9f) * 25f));
+                SetTarget(foreArmR, Quaternion.Euler(-15f, 0f, 0f));
+                break;
+
+            case Emote.ScratchHead:
+                SetTarget(upperArmR, Quaternion.Euler(-125f, 0f, 35f));
+                SetTarget(foreArmR, Quaternion.Euler(-100f + Osc(14f) * 12f, 0f, 0f));
+                SetTarget(head, Quaternion.Euler(8f, 0f, -10f));
+                break;
+
+            case Emote.Phone:
+                SetTarget(upperArmR, Quaternion.Euler(-35f, 0f, -12f));
+                SetTarget(foreArmR, Quaternion.Euler(-115f, 0f, 0f));
+                SetTarget(upperArmL, Quaternion.Euler(-10f, 0f, 0f));
+                SetTarget(head, Quaternion.Euler(20f + Osc(0.7f) * 3f, 0f, 0f));
+                break;
+
+            case Emote.Chat:
+                SetTarget(upperArmL, Quaternion.Euler(-25f + Osc(4.5f) * 12f, 0f, 0f));
+                SetTarget(foreArmL, Quaternion.Euler(-70f, 0f, 0f));
+                SetTarget(upperArmR, Quaternion.Euler(-30f + Osc(3.7f, 1f) * 15f, 0f, 0f));
+                SetTarget(foreArmR, Quaternion.Euler(-60f + Osc(6f) * 20f, 0f, 0f));
+                SetTarget(head, Quaternion.Euler(Osc(3f) * 6f, Osc(1.1f) * 15f, 0f));
+                break;
+
+            case Emote.Peek:
+                lean += 30f;
+                SetTarget(head, Quaternion.Euler(12f, Osc(0.8f) * 10f, 0f));
+                SetTarget(upperArmL, Quaternion.Euler(-85f, 0f, 0f));
+                SetTarget(upperArmR, Quaternion.Euler(-85f, 0f, 0f));
+                SetTarget(foreArmL, Quaternion.Euler(-25f, 0f, 0f));
+                SetTarget(foreArmR, Quaternion.Euler(-25f, 0f, 0f));
+                break;
+
+            case Emote.Sit:
+                bob -= 0.2f;
+                lean -= 5f;
+                SetTarget(thighL, Quaternion.Euler(-85f, 0f, 0f));
+                SetTarget(thighR, Quaternion.Euler(-85f, 0f, 0f));
+                SetTarget(shinL, Quaternion.Euler(80f, 0f, 0f));
+                SetTarget(shinR, Quaternion.Euler(80f, 0f, 0f));
+                SetTarget(upperArmL, Quaternion.Euler(-25f, 0f, 0f));
+                SetTarget(upperArmR, Quaternion.Euler(-25f, 0f, 0f));
+                SetTarget(foreArmL, Quaternion.Euler(-40f, 0f, 0f));
+                SetTarget(foreArmR, Quaternion.Euler(-40f, 0f, 0f));
+                SetTarget(head, Quaternion.Euler(Osc(0.5f) * 4f, Osc(0.3f) * 20f, 0f));
+                break;
+
+            case Emote.SitGround:
+                bob -= 0.55f;
+                lean -= 12f;
+                SetTarget(thighL, Quaternion.Euler(-85f, 0f, -6f));
+                SetTarget(thighR, Quaternion.Euler(-85f, 0f, 6f));
+                SetTarget(shinL, Quaternion.Euler(5f, 0f, 0f));
+                SetTarget(shinR, Quaternion.Euler(5f, 0f, 0f));
+                SetTarget(upperArmL, Quaternion.Euler(20f, 0f, -12f));
+                SetTarget(upperArmR, Quaternion.Euler(20f, 0f, 12f));
+                SetTarget(foreArmL, Quaternion.Euler(0f, 0f, 0f));
+                SetTarget(foreArmR, Quaternion.Euler(0f, 0f, 0f));
+                break;
+        }
     }
 
     // Niesienie przedmiotu przed brzuchem
@@ -648,7 +727,7 @@ public class ProceduralAnimator : MonoBehaviour
         Vector3 feet = GetFeetPosition();
         Quaternion facing = GetFacing();
 
-        Vector3 target = feet + Vector3.up * (torso.restPos.y + HoverOffset + bob);
+        Vector3 target = feet + bodyOffset + Vector3.up * (torso.restPos.y + HoverOffset + bob);
         Vector3 toTarget = target - rb.position;
 
         // Zaklinowany albo odepchniety za daleko -> teleport

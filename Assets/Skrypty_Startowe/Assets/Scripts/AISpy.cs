@@ -103,7 +103,7 @@ public class AISpy : MonoBehaviour
         {
             idleTimer -= dt;
             DoIdleQuirks(dt);
-            if (idleTimer <= 0f) { isIdle = false; NextLeg(carrying); }
+            if (idleTimer <= 0f) { isIdle = false; anim.emote = Emote.None; NextLeg(carrying); }
         }
         else if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f)
         {
@@ -163,6 +163,11 @@ public class AISpy : MonoBehaviour
         // Z walizka postoje sa krotsze - ale nie zerowe, bo to wygladaloby podejrzanie
         idleTimer = carrying ? Random.Range(0.6f, 2f) : Random.Range(1f, 4f);
         quirkTimer = Random.Range(0.4f, 1.5f);
+
+        // Te same drobne czynnosci co u botow - ale czlowiek robi je plynniej (to widac z bliska)
+        float r = Random.value;
+        if (!carrying && r < 0.15f) anim.emote = Emote.Phone;
+        else if (!carrying && r < 0.22f) anim.emote = Emote.ScratchHead;
     }
 
     void DoIdleQuirks(float dt)
@@ -190,6 +195,7 @@ public class AISpy : MonoBehaviour
 
     void BeginGrab()
     {
+        anim.emote = Emote.None;
         state = State.Grab;
         isIdle = false;
         grabTimer = 0f;
@@ -239,6 +245,7 @@ public class AISpy : MonoBehaviour
 
     void BeginSlip()
     {
+        anim.emote = Emote.None;
         state = State.Slip;
         isIdle = false;
         slipTimer = Random.Range(1.2f, 2.5f);
@@ -283,6 +290,7 @@ public class AISpy : MonoBehaviour
             member.DropProp();
             state = State.Blend;
         }
+        anim.emote = Emote.None;
         panicTimer = GameConfig.PanicDuration * Random.Range(0.8f, 1.1f);
         agent.speed = GameConfig.BotPanicSpeed;
         anim.panicking = true;

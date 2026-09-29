@@ -48,7 +48,7 @@ public class SniperController : MonoBehaviour
 
     void Update()
     {
-        if (GameManager.Instance != null && !GameManager.Instance.IsPlaying) return;
+        if (GameManager.Instance != null && (!GameManager.Instance.IsPlaying || GameManager.Instance.KillCamActive)) return;
         HandleAiming();
         HandleShooting();
         HandleMarking();
@@ -136,7 +136,7 @@ public class SniperController : MonoBehaviour
 
     void OnGUI()
     {
-        if (GameManager.Instance != null && !GameManager.Instance.IsPlaying) return;
+        if (GameManager.Instance != null && (!GameManager.Instance.IsPlaying || GameManager.Instance.KillCamActive)) return;
         GUI.depth = 10; // pod HUD-em
 
         float cx = Screen.width / 2f;

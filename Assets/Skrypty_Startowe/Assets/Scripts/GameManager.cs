@@ -16,6 +16,7 @@ public class GameManager : MonoBehaviour
     [Range(30, 400)] public int botCount = 120;
     [Tooltip("Kolorowe stroje zamiast klasycznych bialych Bobow z Human Fall Flat.")]
     public bool colorfulOutfits = false;
+    public MapType map = MapType.Parking;
 
     public State CurrentState { get; private set; }
     public Mode CurrentMode { get; private set; }
@@ -40,10 +41,22 @@ public class GameManager : MonoBehaviour
     string endReason = "";
     float menuOrbit;
 
+    // Statystyki rundy
+    int statShots, statInnocent, statSpiesKilled, statPanics;
+    float statLongestKill, statMaxSuspicion;
+
+    // Powtorka strzalu w zwolnionym tempie
+    float killCamUntil = -1f;
+    Transform killCamTarget;
+    Vector3 killCamOffset;
+    Vector3 savedCamPos;
+    Quaternion savedCamRot;
+    float savedFov;
+    public bool KillCamActive => killCamUntil > 0f;
+
     struct Message { public string text; public Color color; public float until; }
     readonly List<Message> messages = new List<Message>();
 
-    static readonly Color Sky = new Color(0.62f, 0.75f, 0.88f);
 
     // ------------------------------------------------------------------------------
 
@@ -53,9 +66,22 @@ public class GameManager : MonoBehaviour
         Instance = this;
         Time.timeScale = 1f;
 
-        SetupEnvironment();
         SetupCamera();
-        level = LevelBuilder.Build(Random.Range(0, 100000));
+        LoadMap(map);
+    }
+
+    void LoadMap(MapType newMap)
+    {
+        EndKillCam();
+        ClearRound();
+        if (level != null && level.root != null)
+        {
+            level.root.SetActive(false); // natychmiast wylacza stary NavMesh, strefy itd.
+            Destroy(level.root);
+        }
+        map = newMap;
+        level = LevelBuilder.Build(map, Random.Range(0, 100000));
+        SetupEnvironment();
         EnterMenu();
     }
 
@@ -63,17 +89,19 @@ public class GameManager : MonoBehaviour
     {
         if (Instance == this) Instance = null;
         Time.timeScale = 1f;
+        Time.fixedDeltaTime = 0.02f;
     }
 
     void SetupEnvironment()
     {
         RenderSettings.ambientMode = AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.75f, 0.8f, 0.9f);
-        RenderSettings.ambientEquatorColor = new Color(0.6f, 0.6f, 0.62f);
-        RenderSettings.ambientGroundColor = new Color(0.35f, 0.33f, 0.3f);
+        RenderSettings.ambientSkyColor = level.ambientSky;
+        RenderSettings.ambientEquatorColor = level.ambientEquator;
+        RenderSettings.ambientGroundColor = level.ambientGround;
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = Sky;
+        RenderSettings.fogColor = level.sky;
+        cam.backgroundColor = level.sky;
         RenderSettings.fogStartDistance = 90f;
         RenderSettings.fogEndDistance = 260f;
 
@@ -86,7 +114,7 @@ public class GameManager : MonoBehaviour
             sun.type = LightType.Directional;
         }
         sun.color = new Color(1f, 0.96f, 0.88f);
-        sun.intensity = 1.3f;
+        sun.intensity = level.sunIntensity;
         sun.shadows = LightShadows.Soft;
         sun.shadowStrength = 0.75f;
         sun.transform.rotation = Quaternion.Euler(50f, -35f, 0f);
@@ -102,7 +130,6 @@ public class GameManager : MonoBehaviour
             go.AddComponent<AudioListener>();
         }
         cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = Sky;
         cam.nearClipPlane = 0.1f;
         cam.farClipPlane = 500f;
         cam.fieldOfView = 60f;
@@ -120,6 +147,7 @@ public class GameManager : MonoBehaviour
 
     void EnterMenu()
     {
+        EndKillCam();
         ClearRound();
         Time.timeScale = 1f;
         CurrentState = State.Menu;
@@ -143,15 +171,21 @@ public class GameManager : MonoBehaviour
             Vector3 pos = RandomSpawnPoint(type == PropType.Suitcase ? 6f : 0f);
             Prop.Create(type, pos + Vector3.up * 0.02f, Quaternion.Euler(0f, Random.Range(0f, 360f), 0f), roundRoot.transform);
         }
+        // Lotnisko: walizki podroznych krazace na tasmach bagazowych
+        foreach (var c in level.carouselSpots)
+            if (Random.value < 0.8f) Prop.Create(PropType.Suitcase, c.position, c.rotation, roundRoot.transform);
     }
 
     void StartRound(Mode mode)
     {
+        EndKillCam();
         ClearRound();
         Time.timeScale = 1f;
         CurrentMode = mode;
         CrowdMember.PanicUntil = 0f;
         suitcasesStolen = 0;
+        statShots = statInnocent = statSpiesKilled = statPanics = 0;
+        statLongestKill = statMaxSuspicion = 0f;
         endAt = -1f;
         timeLeft = GameConfig.RoundTime;
         messages.Clear();
@@ -195,7 +229,11 @@ public class GameManager : MonoBehaviour
 
     void ClearRound()
     {
-        if (roundRoot != null) Destroy(roundRoot);
+        if (roundRoot != null)
+        {
+            roundRoot.SetActive(false);
+            Destroy(roundRoot);
+        }
         roundRoot = new GameObject("Round");
         spies.Clear();
         playerSpy = null;
@@ -272,6 +310,7 @@ public class GameManager : MonoBehaviour
 
         if (m.isSpy)
         {
+            StartKillCam(m);
             if (m.isPlayer)
             {
                 ShowMessage("ZOSTAŁEŚ ZDEMASKOWANY!", new Color(1f, 0.3f, 0.3f), 4f);
@@ -293,6 +332,14 @@ public class GameManager : MonoBehaviour
     public void OnShotFired(SniperShot.Result result)
     {
         if (CurrentState != State.Playing) return;
+        statShots++;
+        if (result.victim != null)
+        {
+            if (result.victim.isSpy) statSpiesKilled++;
+            else statInnocent++;
+            statLongestKill = Mathf.Max(statLongestKill, Vector3.Distance(level.sniperPosition, result.point));
+        }
+        if (result.victim == null || !result.victim.isSpy) statPanics++;
         if (result.victim == null)
         {
             if (CurrentMode == Mode.Sniper) ShowMessage("Pudło! Tłum panikuje!", new Color(1f, 0.6f, 0.2f), 2.5f);
@@ -407,7 +454,9 @@ public class GameManager : MonoBehaviour
                 timeLeft -= Time.deltaTime;
                 if (timeLeft <= 0f) { timeLeft = 0f; CheckEnd(); }
                 if (endAt > 0f && Time.time >= endAt) FinishRound();
-                if (esc) { CurrentState = State.Paused; Time.timeScale = 0f; }
+                if (aiSniper != null && playerSpy != null && !playerSpy.IsDead)
+                    statMaxSuspicion = Mathf.Max(statMaxSuspicion, aiSniper.GetSuspicion(playerSpy) / aiSniper.shootThreshold);
+                if (esc && !KillCamActive) { CurrentState = State.Paused; Time.timeScale = 0f; }
                 break;
 
             case State.Paused:
@@ -415,6 +464,7 @@ public class GameManager : MonoBehaviour
                 break;
 
             case State.GameOver:
+                if (KillCamActive) break;
                 if (esc) EnterMenu();
                 else if (kb != null && kb.rKey.wasPressedThisFrame) StartRound(CurrentMode);
                 break;
@@ -425,6 +475,50 @@ public class GameManager : MonoBehaviour
         Cursor.visible = !lockCursor;
 
         messages.RemoveAll(m => Time.unscaledTime > m.until);
+    }
+
+    // --- Powtorka strzalu: zwolnione tempo i kamera z boku ofiary ----------------------------
+
+    void StartKillCam(CrowdMember victim)
+    {
+        if (KillCamActive || victim == null) return;
+        savedCamPos = cam.transform.position;
+        savedCamRot = cam.transform.rotation;
+        savedFov = cam.fieldOfView;
+
+        killCamTarget = victim.Animator.TorsoTransform;
+        Vector3 shotDir = victim.TorsoPosition - level.sniperPosition;
+        shotDir.y = 0f;
+        shotDir.Normalize();
+        Vector3 side = Vector3.Cross(Vector3.up, shotDir);
+        killCamOffset = side * 4f + Vector3.up * 1.3f + shotDir * 1.5f;
+        cam.transform.position = killCamTarget.position + killCamOffset;
+        cam.transform.LookAt(killCamTarget);
+        cam.fieldOfView = 50f;
+
+        Time.timeScale = 0.2f;
+        Time.fixedDeltaTime = 0.02f * Time.timeScale;
+        killCamUntil = Time.unscaledTime + 2.4f;
+    }
+
+    void EndKillCam()
+    {
+        if (!KillCamActive) return;
+        killCamUntil = -1f;
+        Time.timeScale = CurrentState == State.Paused ? 0f : 1f;
+        Time.fixedDeltaTime = 0.02f;
+        cam.transform.SetPositionAndRotation(savedCamPos, savedCamRot);
+        cam.fieldOfView = savedFov;
+    }
+
+    void LateUpdate()
+    {
+        if (!KillCamActive) return;
+        if (Time.unscaledTime >= killCamUntil || killCamTarget == null) { EndKillCam(); return; }
+        Vector3 want = killCamTarget.position + killCamOffset;
+        cam.transform.position = Vector3.Lerp(cam.transform.position, want, 1f - Mathf.Exp(-4f * Time.unscaledDeltaTime));
+        cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation,
+            Quaternion.LookRotation(killCamTarget.position - cam.transform.position), 1f - Mathf.Exp(-8f * Time.unscaledDeltaTime));
     }
 
     void Resume()
@@ -490,6 +584,14 @@ public class GameManager : MonoBehaviour
             case State.GameOver: DrawHud(s); DrawGameOver(s); break;
         }
         DrawMessages(s);
+
+        if (KillCamActive)
+        {
+            float bar = Screen.height * 0.1f;
+            Fill(new Rect(0, 0, Screen.width, bar), Color.black);
+            Fill(new Rect(0, Screen.height - bar, Screen.width, bar), Color.black);
+            Label(new Rect(0, Screen.height - bar, Screen.width, bar), "POWTÓRKA", bigStyle, new Color(1f, 0.3f, 0.3f));
+        }
     }
 
     void DrawMenu(float s)
@@ -510,6 +612,7 @@ public class GameManager : MonoBehaviour
             "<b>SHIFT</b> (trzymaj) – TRYB NPC: ruszasz się jak bot\n" +
             "<b>SPACJA</b> – bieg w panice z rękami w górze\n" +
             "<b>E</b> (trzymaj) – złap przedmiot (NIE w trybie NPC), <b>E</b> – odłóż, <b>LPM</b> – rzuć\n\n" +
+            "<b>1–6</b> – czynności jak u botów: machanie, drapanie, telefon, siadanie, gadanie, zaglądanie\n\n" +
             "Boty też noszą kartony, torby i walizki podróżnych. Złap walizkę jako człowiek, a potem nieś ją jak bot. " +
             "Czerwony laser pokazuje, gdzie patrzy snajper.";
         string sniperHelp =
@@ -526,6 +629,11 @@ public class GameManager : MonoBehaviour
         float sy = Screen.height - 120 * s;
         Label(new Rect(cx - 260 * s, sy, 520 * s, 36 * s), "Liczba botów: " + botCount + (botCount > 250 ? "  (może zwolnić!)" : ""), textStyle, Color.white);
         botCount = Mathf.RoundToInt(GUI.HorizontalSlider(new Rect(cx - 260 * s, sy + 44 * s, 520 * s, 30 * s), botCount, 30f, 400f) / 10f) * 10;
+        if (GUI.Button(new Rect(cx - 670 * s, sy + 10 * s, 380 * s, 56 * s), "Mapa: " + LevelBuilder.MapName(map), buttonStyle))
+        {
+            LoadMap((MapType)(((int)map + 1) % 3));
+            return;
+        }
         string look = colorfulOutfits ? "Wygląd: KOLOROWE STROJE" : "Wygląd: BIAŁE BOBY";
         if (GUI.Button(new Rect(cx + 290 * s, sy + 10 * s, 380 * s, 56 * s), look, buttonStyle))
         {
@@ -594,7 +702,7 @@ public class GameManager : MonoBehaviour
             }
 
             Label(new Rect(20 * s, h - 60 * s, 900 * s, 50 * s),
-                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E łap/odłóż · LPM rzut · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
+                "WSAD ruch · SHIFT tryb NPC · SPACJA panika · E łap/odłóż · LPM rzut · 1-6 czynności · Esc pauza", smallStyle, new Color(1f, 1f, 1f, 0.7f));
         }
         else
         {
@@ -653,7 +761,22 @@ public class GameManager : MonoBehaviour
         Label(new Rect(0, Screen.height * 0.2f + 165 * s, Screen.width, 50 * s),
             "Czerwone znaczniki pokazują szpiegów.", bigStyle, new Color(1f, 1f, 1f, 0.8f));
 
-        if (GUI.Button(new Rect(cx - bw / 2f, Screen.height * 0.55f, bw, bh), "Zagraj ponownie (R)", buttonStyle)) StartRound(CurrentMode);
-        if (GUI.Button(new Rect(cx - bw / 2f, Screen.height * 0.55f + bh + 20 * s, bw, bh), "Menu (Esc)", buttonStyle)) EnterMenu();
+        // Statystyki rundy
+        float played = GameConfig.RoundTime - timeLeft;
+        string stats =
+            "Czas rundy: " + string.Format("{0}:{1:00}", (int)(played / 60f), (int)(played % 60f)) +
+            "     Walizki w furgonetce: " + suitcasesStolen + "/" + suitcasesTotal + "\n" +
+            "Strzały: " + statShots + "     Zabici szpiedzy: " + statSpiesKilled + "     Niewinne ofiary: " + statInnocent +
+            "     Paniki: " + statPanics + "\n" +
+            (statLongestKill > 0f ? "Najdłuższy celny strzał: " + Mathf.RoundToInt(statLongestKill) + " m" : "Bez celnych strzałów") +
+            (CurrentMode == Mode.Spy ? "     Najbliżej wpadki: " + Mathf.RoundToInt(Mathf.Min(statMaxSuspicion, 1f) * 100f) + "% podejrzliwości" : "");
+        Rect box = new Rect(cx - 560 * s, Screen.height * 0.2f + 225 * s, 1120 * s, 110 * s);
+        Fill(box, new Color(0f, 0f, 0f, 0.35f));
+        Label(new Rect(box.x, box.y + 8 * s, box.width, box.height), stats, hintStyle, Color.white);
+
+        if (KillCamActive) return; // przyciski po powtorce
+        float by = Screen.height * 0.2f + 350 * s;
+        if (GUI.Button(new Rect(cx - bw / 2f, by, bw, bh), "Zagraj ponownie (R)", buttonStyle)) StartRound(CurrentMode);
+        if (GUI.Button(new Rect(cx - bw / 2f, by + bh + 20 * s, bw, bh), "Menu (Esc)", buttonStyle)) EnterMenu();
     }
 }

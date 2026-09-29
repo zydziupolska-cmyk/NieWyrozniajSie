@@ -145,6 +145,8 @@ public class AISniper : MonoBehaviour
         float e = 0f;
 
         if (!a.roboticMovement && speed > 0.3f) e += 1.3f;        // plynny, ludzki ruch
+        // Czynnosci (telefon, machanie...) robione plynnie zamiast toporne
+        if (a.emote != Emote.None && !a.roboticMovement) e += 0.4f;
         // Boty tez podnosza rzeczy - ale toporne. Plynne, ludzkie siegniecie to wpadka.
         if (a.reaching) e += a.roboticMovement ? 0.1f : 2.2f;
         Prop held = m.HeldProp;

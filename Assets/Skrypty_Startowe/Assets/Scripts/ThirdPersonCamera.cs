@@ -24,6 +24,7 @@ public class ThirdPersonCamera : MonoBehaviour
     void LateUpdate()
     {
         if (target == null) return;
+        if (GameManager.Instance != null && GameManager.Instance.KillCamActive) return; // powtorka steruje kamera
 
         bool inputAllowed = GameManager.Instance == null || GameManager.Instance.IsPlaying;
         if (inputAllowed && Mouse.current != null)

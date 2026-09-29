@@ -7,6 +7,8 @@ using UnityEngine.InputSystem;
 // E      - przytrzymaj, zeby zlapac przedmiot (TYLKO jako czlowiek, bez SHIFT);
 //          zlapany niesiesz dalej (takze w trybie NPC), ponowne E = odloz
 // LPM    - rzut trzymanym przedmiotem
+// 1-6    - czynnosci jak u botow: 1 machanie, 2 drapanie po glowie, 3 telefon,
+//          4 siadanie (na lawce, jesli jest obok), 5 gadanie z gestami, 6 zagladanie
 [RequireComponent(typeof(CharacterController))]
 public class SpyController : MonoBehaviour
 {
@@ -33,6 +35,10 @@ public class SpyController : MonoBehaviour
     public bool IsReaching { get; private set; }
 
     private bool grabKeyReleased;
+    private float emoteTimer;
+    private ActivitySpot sitSpot;
+
+    public Emote CurrentEmote => animator != null ? animator.emote : Emote.None;
     public Transform CameraTransform { get; set; }
 
     void Start()
@@ -69,6 +75,8 @@ public class SpyController : MonoBehaviour
         animator.roboticMovement = isNpcMode;
         animator.panicking = isPanicRunning && !IsReaching;
 
+        HandleEmotes(kb);
+
         if (IsReaching)
         {
             // Rece szukaja przedmiotu; mozna lekko dreptac, zeby dosiegnac
@@ -82,6 +90,74 @@ public class SpyController : MonoBehaviour
             // Z walizka idzie sie troche wolniej, ale tryb NPC zachowuje predkosc bota
             HandleMovement(kb, IsHolding && !isNpcMode ? 0.8f : 1f, true);
         }
+    }
+
+    // --- Emotki ---------------------------------------------------------------------------
+
+    void HandleEmotes(Keyboard kb)
+    {
+        if (kb == null) return;
+        bool moveInput = kb.wKey.isPressed || kb.sKey.isPressed || kb.aKey.isPressed || kb.dKey.isPressed ||
+                         kb.upArrowKey.isPressed || kb.downArrowKey.isPressed || kb.leftArrowKey.isPressed || kb.rightArrowKey.isPressed;
+
+        if (kb.digit1Key.wasPressedThisFrame) StartEmote(Emote.Wave, 2f);
+        else if (kb.digit2Key.wasPressedThisFrame) StartEmote(Emote.ScratchHead, 2.5f);
+        else if (kb.digit3Key.wasPressedThisFrame) StartEmote(Emote.Phone, 0f);
+        else if (kb.digit4Key.wasPressedThisFrame) StartSit();
+        else if (kb.digit5Key.wasPressedThisFrame) StartEmote(Emote.Chat, 0f);
+        else if (kb.digit6Key.wasPressedThisFrame) StartEmote(Emote.Peek, 0f);
+
+        if (animator.emote == Emote.None) return;
+
+        // Ruch, siegniecie albo panika przerywaja czynnosc (machac mozna w biegu)
+        bool movingBreaks = moveInput && animator.emote != Emote.Wave && animator.emote != Emote.Phone;
+        if (movingBreaks || IsReaching || isPanicRunning) { StopEmote(); return; }
+
+        if (emoteTimer > 0f)
+        {
+            emoteTimer -= Time.deltaTime;
+            if (emoteTimer <= 0f) StopEmote();
+        }
+        if (sitSpot != null) transform.rotation = Quaternion.LookRotation(sitSpot.facing);
+    }
+
+    // duration <= 0 = trwa do ponownego nacisniecia albo ruchu
+    void StartEmote(Emote e, float duration)
+    {
+        bool same = animator.emote == e;
+        StopEmote();
+        if (same && duration <= 0f) return;
+        animator.emote = e;
+        emoteTimer = duration;
+    }
+
+    void StartSit()
+    {
+        if (animator.emote == Emote.Sit || animator.emote == Emote.SitGround) { StopEmote(); return; }
+        StopEmote();
+        var bench = ActivitySpot.NearestFree(transform.position, SpotKind.Bench, 1.6f);
+        if (bench != null)
+        {
+            sitSpot = bench;
+            bench.occupant = member;
+            Vector3 seat = bench.standPoint + bench.bodyOffset;
+            Vector3 offset = seat - transform.position;
+            offset.y = 0f;
+            animator.bodyOffset = offset;
+            animator.emote = Emote.Sit;
+            transform.rotation = Quaternion.LookRotation(bench.facing);
+        }
+        else animator.emote = Emote.SitGround;
+        emoteTimer = 0f;
+    }
+
+    void StopEmote()
+    {
+        animator.emote = Emote.None;
+        animator.bodyOffset = Vector3.zero;
+        emoteTimer = 0f;
+        if (sitSpot != null && sitSpot.occupant == member) sitSpot.occupant = null;
+        sitSpot = null;
     }
 
     void HandleMovement(Keyboard kb, float speedMultiplier, bool rotate)
