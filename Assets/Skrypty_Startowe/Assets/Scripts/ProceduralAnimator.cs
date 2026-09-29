@@ -13,6 +13,10 @@ public class ProceduralAnimator : MonoBehaviour
     public bool roboticMovement = true;
     [Tooltip("Dlugosc pelnego cyklu chodu (dwa kroki) w metrach.")]
     public float strideLength = 1.2f;
+    [Tooltip("Rece w gorze i wymachiwanie - panika tlumu.")]
+    public bool panicking;
+    [Tooltip("Siegniecie po przedmiot (kradziez walizki) - bardzo ludzki ruch.")]
+    public bool reaching;
 
     [Header("Wyglad")]
     [Tooltip("Losowe ubrania. Wylacz, aby wszyscy byli bialymi ludzikami jak Bob z HFF.")]
@@ -38,6 +42,7 @@ public class ProceduralAnimator : MonoBehaviour
 
     public bool IsDead { get; private set; }
     public Transform TorsoTransform => torso != null ? torso.rb.transform : transform;
+    public float CurrentSpeed => smoothSpeed;
 
     // ---------------------------------------------------------------------
 
@@ -398,6 +403,9 @@ public class ProceduralAnimator : MonoBehaviour
         if (roboticMovement) AnimateRobotic(out bob, out lean, out roll);
         else AnimateHuman(out bob, out lean, out roll);
 
+        if (panicking) AnimatePanicArms();
+        else if (reaching) AnimateReach(ref lean);
+
         Balance(rootVel, bob, lean, roll);
     }
 
@@ -446,6 +454,29 @@ public class ProceduralAnimator : MonoBehaviour
         bob = -0.03f * gait * Mathf.Abs(q);
         lean = 0f;
         roll = 0f;
+    }
+
+    // Rece nad glowa i machanie - wspolne dla botow i szpiegow
+    void AnimatePanicArms()
+    {
+        float t = Time.time * 11f + phase;
+        float wave = roboticMovement ? Mathf.Round(Mathf.Sin(t)) : Mathf.Sin(t);
+        SetTarget(upperArmL, Quaternion.Euler(-140f + wave * 25f, 0f, -25f));
+        SetTarget(upperArmR, Quaternion.Euler(-140f - wave * 25f, 0f, 25f));
+        SetTarget(foreArmL, Quaternion.Euler(-30f, 0f, 0f));
+        SetTarget(foreArmR, Quaternion.Euler(-30f, 0f, 0f));
+    }
+
+    // Pochylenie i siegniecie obiema rekami w dol-przod
+    void AnimateReach(ref float lean)
+    {
+        float t = Mathf.Sin(Time.time * 9f) * 8f;
+        SetTarget(upperArmL, Quaternion.Euler(-70f + t, 0f, 5f));
+        SetTarget(upperArmR, Quaternion.Euler(-70f - t, 0f, -5f));
+        SetTarget(foreArmL, Quaternion.Euler(-20f, 0f, 0f));
+        SetTarget(foreArmR, Quaternion.Euler(-20f, 0f, 0f));
+        SetTarget(head, Quaternion.Euler(25f, 0f, 0f));
+        lean += 25f;
     }
 
     void Balance(Vector3 rootVel, float bob, float lean, float roll)

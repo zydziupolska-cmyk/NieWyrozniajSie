@@ -1,39 +1,53 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+// Kamera TPP szpiega: orbitowanie mysza, zoom kolkiem, nie przenika przez auta i filary.
 public class ThirdPersonCamera : MonoBehaviour
 {
     public Transform target;
-    public float distance = 4f;
-    public float height = 1.5f;
-    public float rotationSpeed = 2f;
-    
-    private float currentX = 0f;
-    private float currentY = 15f;
+    public float distance = 5f;
+    public float minDistance = 2f;
+    public float maxDistance = 9f;
+    public float height = 1.6f;
+    public float sensitivity = 0.12f;
 
-    void Start()
+    private float yaw = 0f;
+    private float pitch = 15f;
+    private float currentDistance;
+
+    void OnEnable()
     {
-        // Zablokuj kursor myszy na środku ekranu, żeby wygodnie obracać kamerą
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        currentDistance = distance;
+        if (target != null) yaw = target.eulerAngles.y;
     }
 
     void LateUpdate()
     {
         if (target == null) return;
 
-        if (Mouse.current != null)
+        bool inputAllowed = GameManager.Instance == null || GameManager.Instance.IsPlaying;
+        if (inputAllowed && Mouse.current != null)
         {
             Vector2 mouseDelta = Mouse.current.delta.ReadValue();
-            currentX += mouseDelta.x * rotationSpeed;
-            currentY -= mouseDelta.y * rotationSpeed;
-            currentY = Mathf.Clamp(currentY, -10f, 60f); // Ograniczenie góra/dół
+            yaw += mouseDelta.x * sensitivity;
+            pitch -= mouseDelta.y * sensitivity;
+            pitch = Mathf.Clamp(pitch, -10f, 65f);
+
+            float scroll = Mouse.current.scroll.ReadValue().y;
+            if (Mathf.Abs(scroll) > 0.01f) distance = Mathf.Clamp(distance - Mathf.Sign(scroll) * 0.6f, minDistance, maxDistance);
         }
 
-        Vector3 offset = new Vector3(0, 0, -distance);
-        Quaternion rotation = Quaternion.Euler(currentY, currentX, 0);
-        
-        transform.position = target.position + Vector3.up * height + rotation * offset;
-        transform.LookAt(target.position + Vector3.up * height);
+        Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
+        Vector3 focus = target.position + Vector3.up * height;
+        Vector3 back = rotation * Vector3.back;
+
+        // Kolizja kamery tylko z otoczeniem (nie z postaciami)
+        float wanted = distance;
+        if (Physics.SphereCast(focus, 0.25f, back, out RaycastHit hit, distance, 1 << 0, QueryTriggerInteraction.Ignore))
+            wanted = Mathf.Max(0.5f, hit.distance - 0.1f);
+        currentDistance = wanted < currentDistance ? wanted : Mathf.Lerp(currentDistance, wanted, Time.deltaTime * 5f);
+
+        transform.position = focus + back * currentDistance;
+        transform.rotation = rotation;
     }
 }
