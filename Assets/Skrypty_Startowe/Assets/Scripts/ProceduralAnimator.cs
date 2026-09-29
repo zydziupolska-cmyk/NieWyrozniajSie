@@ -19,8 +19,8 @@ public class ProceduralAnimator : MonoBehaviour
     public bool reaching;
 
     [Header("Wyglad")]
-    [Tooltip("Losowe ubrania. Wylacz, aby wszyscy byli bialymi ludzikami jak Bob z HFF.")]
-    public bool randomOutfit = true;
+    [Tooltip("Kolorowe koszulki i spodnie. Wylaczone = wszyscy sa bialymi Bobami jak w Human Fall Flat.")]
+    public bool randomOutfit = false;
     [Tooltip("-1 = losowy. Stala wartosc przyda sie do synchronizacji w multiplayerze.")]
     public int appearanceSeed = -1;
 
@@ -51,6 +51,7 @@ public class ProceduralAnimator : MonoBehaviour
         public Rigidbody rb;
         public ConfigurableJoint joint;
         public Vector3 restPos;
+        public float halfLength;
         public float spring, damper;
     }
 
@@ -153,45 +154,46 @@ public class ProceduralAnimator : MonoBehaviour
     void BuildRagdoll()
     {
         var rng = appearanceSeed >= 0 ? new System.Random(appearanceSeed) : new System.Random(Random.Range(int.MinValue, int.MaxValue));
-        Color skin, shirt, pants;
-        PickOutfit(rng, out skin, out shirt, out pants);
-        Material skinMat = LowPolyFactory.GetMaterial(skin);
-        Material shirtMat = LowPolyFactory.GetMaterial(shirt);
-        Material pantsMat = LowPolyFactory.GetMaterial(pants);
-        Material eyeMat = LowPolyFactory.GetMaterial(new Color(0.08f, 0.08f, 0.1f));
+        PickOutfit(rng, out Color skin, out Color shirt, out Color pants, out Color shoes);
+        Material skinMat = LowPolyFactory.GetBodyMaterial(skin);
+        Material shirtMat = LowPolyFactory.GetBodyMaterial(shirt);
+        Material pantsMat = LowPolyFactory.GetBodyMaterial(pants);
+        Material shoeMat = LowPolyFactory.GetBodyMaterial(shoes);
 
         ragdollRoot = new GameObject("Ragdoll_" + gameObject.name);
         ragdollRoot.transform.SetPositionAndRotation(GetFeetPosition(), GetFacing());
 
-        // Proporcje "Boba": duzy okragly tulow, glowa bez szyi, krotkie grube konczyny.
-        // Wszystkie punkty to srodki polkul kapsul, lokalnie wzgledem stop.
-        torso = CreatePart("Torso", new Vector3(0f, 1.28f, 0f), new Vector3(0f, 0.82f, 0f), 0.26f, 15f, shirtMat, 1.2f, 0.9f, 10, 3);
-        head = CreatePart("Head", new Vector3(0f, 1.72f, 0f), new Vector3(0f, 1.72f, 0f), 0.24f, 4f, skinMat, 1f, 1f, 10, 3);
+        // Proporcje Boba z Human Fall Flat: tulow jak jajko (szerszy dol), duza gladka glowa
+        // bez szyi i bez twarzy, grube rece z lapkami-rekawiczkami, krotkie nogi ze stopkami.
+        // Punkty to srodki polkul kapsul (gora, dol), lokalnie wzgledem stop.
+        torso = CreatePart("Torso", new Vector3(0f, 1.20f, 0f), new Vector3(0f, 0.80f, 0f), 0.25f, 0.29f, 15f, shirtMat, 1f, 1f, 0.82f);
+        head = CreatePart("Head", new Vector3(0f, 1.66f, 0f), new Vector3(0f, 1.66f, 0f), 0.25f, 0.25f, 4f, skinMat, 1f, 1.06f, 1f);
 
-        upperArmL = CreatePart("UpperArm_L", new Vector3(-0.42f, 1.36f, 0f), new Vector3(-0.42f, 1.10f, 0f), 0.09f, 2f, shirtMat);
-        upperArmR = CreatePart("UpperArm_R", new Vector3(0.42f, 1.36f, 0f), new Vector3(0.42f, 1.10f, 0f), 0.09f, 2f, shirtMat);
-        foreArmL = CreatePart("ForeArm_L", new Vector3(-0.42f, 1.10f, 0f), new Vector3(-0.42f, 0.84f, 0f), 0.095f, 1.5f, skinMat);
-        foreArmR = CreatePart("ForeArm_R", new Vector3(0.42f, 1.10f, 0f), new Vector3(0.42f, 0.84f, 0f), 0.095f, 1.5f, skinMat);
+        upperArmL = CreatePart("UpperArm_L", new Vector3(-0.32f, 1.36f, 0f), new Vector3(-0.32f, 1.11f, 0f), 0.09f, 0.08f, 2f, shirtMat);
+        upperArmR = CreatePart("UpperArm_R", new Vector3(0.32f, 1.36f, 0f), new Vector3(0.32f, 1.11f, 0f), 0.09f, 0.08f, 2f, shirtMat);
+        foreArmL = CreatePart("ForeArm_L", new Vector3(-0.32f, 1.11f, 0f), new Vector3(-0.32f, 0.88f, 0f), 0.08f, 0.10f, 1.5f, skinMat);
+        foreArmR = CreatePart("ForeArm_R", new Vector3(0.32f, 1.11f, 0f), new Vector3(0.32f, 0.88f, 0f), 0.08f, 0.10f, 1.5f, skinMat);
 
-        thighL = CreatePart("Thigh_L", new Vector3(-0.14f, 0.72f, 0f), new Vector3(-0.14f, 0.42f, 0f), 0.12f, 4f, pantsMat);
-        thighR = CreatePart("Thigh_R", new Vector3(0.14f, 0.72f, 0f), new Vector3(0.14f, 0.42f, 0f), 0.12f, 4f, pantsMat);
-        shinL = CreatePart("Shin_L", new Vector3(-0.14f, 0.42f, 0f), new Vector3(-0.14f, 0.11f, 0f), 0.11f, 3f, pantsMat);
-        shinR = CreatePart("Shin_R", new Vector3(0.14f, 0.42f, 0f), new Vector3(0.14f, 0.11f, 0f), 0.11f, 3f, pantsMat);
+        thighL = CreatePart("Thigh_L", new Vector3(-0.15f, 0.70f, 0f), new Vector3(-0.15f, 0.42f, 0f), 0.125f, 0.11f, 4f, pantsMat);
+        thighR = CreatePart("Thigh_R", new Vector3(0.15f, 0.70f, 0f), new Vector3(0.15f, 0.42f, 0f), 0.125f, 0.11f, 4f, pantsMat);
+        shinL = CreatePart("Shin_L", new Vector3(-0.15f, 0.42f, 0f), new Vector3(-0.15f, 0.12f, 0f), 0.105f, 0.10f, 3f, pantsMat);
+        shinR = CreatePart("Shin_R", new Vector3(0.15f, 0.42f, 0f), new Vector3(0.15f, 0.12f, 0f), 0.105f, 0.10f, 3f, pantsMat);
 
-        // Oczy - czysto wizualne, bez colliderow. Pomagaja snajperowi widziec, gdzie ktos patrzy.
-        AddEye(head, new Vector3(-0.085f, 0.03f, 0.215f), eyeMat);
-        AddEye(head, new Vector3(0.085f, 0.03f, 0.215f), eyeMat);
+        // Stopki - czysto wizualne, wystaja lekko do przodu
+        AddFoot(shinL, shoeMat);
+        AddFoot(shinR, shoeMat);
 
         // Stawy: (dziecko, rodzic, punkt obrotu, limity X low/high, limit Y, limit Z, sprezyna, tlumienie)
+        // Punkt obrotu konczyn = srodek gornej polkuli czesci.
         Connect(head, torso, new Vector3(0f, -0.2f, 0f), -30f, 30f, 30f, 20f, 150f, 4f);
-        Connect(upperArmL, torso, new Vector3(0f, 0.13f, 0f), -150f, 150f, 40f, 80f, 150f, 10f);
-        Connect(upperArmR, torso, new Vector3(0f, 0.13f, 0f), -150f, 150f, 40f, 80f, 150f, 10f);
-        Connect(foreArmL, upperArmL, new Vector3(0f, 0.13f, 0f), -60f, 140f, 5f, 5f, 100f, 4f);
-        Connect(foreArmR, upperArmR, new Vector3(0f, 0.13f, 0f), -60f, 140f, 5f, 5f, 100f, 4f);
-        Connect(thighL, torso, new Vector3(0f, 0.15f, 0f), -90f, 90f, 20f, 30f, 450f, 30f);
-        Connect(thighR, torso, new Vector3(0f, 0.15f, 0f), -90f, 90f, 20f, 30f, 450f, 30f);
-        Connect(shinL, thighL, new Vector3(0f, 0.155f, 0f), -140f, 60f, 5f, 5f, 300f, 10f);
-        Connect(shinR, thighR, new Vector3(0f, 0.155f, 0f), -140f, 60f, 5f, 5f, 300f, 10f);
+        Connect(upperArmL, torso, TopAnchor(upperArmL), -150f, 150f, 40f, 80f, 150f, 10f);
+        Connect(upperArmR, torso, TopAnchor(upperArmR), -150f, 150f, 40f, 80f, 150f, 10f);
+        Connect(foreArmL, upperArmL, TopAnchor(foreArmL), -60f, 140f, 5f, 5f, 100f, 4f);
+        Connect(foreArmR, upperArmR, TopAnchor(foreArmR), -60f, 140f, 5f, 5f, 100f, 4f);
+        Connect(thighL, torso, TopAnchor(thighL), -90f, 90f, 20f, 30f, 450f, 30f);
+        Connect(thighR, torso, TopAnchor(thighR), -90f, 90f, 20f, 30f, 450f, 30f);
+        Connect(shinL, thighL, TopAnchor(shinL), -140f, 60f, 5f, 5f, 300f, 10f);
+        Connect(shinR, thighR, TopAnchor(shinR), -140f, 60f, 5f, 5f, 300f, 10f);
 
         // Czesci jednego ciala nie zderzaja sie ze soba (brak drgan)
         for (int i = 0; i < parts.Count; i++)
@@ -207,37 +209,37 @@ public class ProceduralAnimator : MonoBehaviour
         foreach (var p in parts) totalMass += p.rb.mass;
     }
 
-    void PickOutfit(System.Random rng, out Color skin, out Color shirt, out Color pants)
+    static Vector3 TopAnchor(Part p) => new Vector3(0f, p.halfLength, 0f);
+
+    void PickOutfit(System.Random rng, out Color skin, out Color shirt, out Color pants, out Color shoes)
     {
-        Color[] skins =
-        {
-            new Color(0.96f, 0.94f, 0.90f), new Color(0.93f, 0.84f, 0.76f),
-            new Color(0.80f, 0.64f, 0.50f), new Color(0.56f, 0.41f, 0.31f)
-        };
+        // Klasyczny Bob: caly bialy, lekko cieply odcien
+        Color bob = new Color(0.95f, 0.94f, 0.92f);
+        skin = shirt = pants = shoes = bob;
+        if (!randomOutfit) return;
+
+        // "Stroje" jak w HFF: bialy ludzik w kolorowej koszulce i spodniach
         Color[] shirts =
         {
             new Color(0.85f, 0.33f, 0.30f), new Color(0.30f, 0.50f, 0.80f), new Color(0.95f, 0.75f, 0.30f),
-            new Color(0.40f, 0.70f, 0.45f), new Color(0.60f, 0.45f, 0.75f), new Color(0.92f, 0.92f, 0.90f),
+            new Color(0.40f, 0.70f, 0.45f), new Color(0.60f, 0.45f, 0.75f), bob,
             new Color(0.35f, 0.35f, 0.40f), new Color(0.95f, 0.55f, 0.35f)
         };
         Color[] trousers =
         {
             new Color(0.20f, 0.25f, 0.40f), new Color(0.30f, 0.30f, 0.32f), new Color(0.45f, 0.35f, 0.25f),
-            new Color(0.55f, 0.60f, 0.70f), new Color(0.15f, 0.15f, 0.17f)
+            new Color(0.55f, 0.60f, 0.70f), bob
         };
-
-        if (!randomOutfit)
-        {
-            skin = shirt = pants = skins[0];
-            return;
-        }
-        skin = skins[rng.Next(skins.Length)];
+        Color[] footwear = { new Color(0.15f, 0.15f, 0.17f), new Color(0.45f, 0.3f, 0.2f), bob };
         shirt = shirts[rng.Next(shirts.Length)];
         pants = trousers[rng.Next(trousers.Length)];
+        shoes = footwear[rng.Next(footwear.Length)];
     }
 
-    Part CreatePart(string partName, Vector3 top, Vector3 bottom, float radius, float mass, Material mat,
-                    float sx = 1f, float sz = 1f, int sides = 7, int capRings = 2)
+    // Czesc ciala: gladka kapsula od "top" do "bottom" (pionowo), rTop/rBottom = promienie polkul,
+    // sx/sy/sz = splaszczenie siatki (np. tulow plytszy niz szerszy)
+    Part CreatePart(string partName, Vector3 top, Vector3 bottom, float rTop, float rBottom, float mass, Material mat,
+                    float sx = 1f, float sy = 1f, float sz = 1f)
     {
         float length = Vector3.Distance(top, bottom);
         Vector3 center = (top + bottom) * 0.5f;
@@ -247,13 +249,13 @@ public class ProceduralAnimator : MonoBehaviour
         go.transform.localPosition = center;
         if (ragdollLayer >= 0) go.layer = ragdollLayer;
 
-        go.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.Capsule(radius, length, sx, sz, sides, capRings);
+        go.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.SmoothCapsule(rBottom, rTop, length, sx, sy, sz);
         go.AddComponent<MeshRenderer>().sharedMaterial = mat;
 
-        float colRadius = radius * (sx + sz) * 0.5f;
+        float colRadius = (rTop + rBottom) * 0.5f * (sx + sz) * 0.5f;
         if (length <= 0.0001f)
         {
-            go.AddComponent<SphereCollider>().radius = colRadius;
+            go.AddComponent<SphereCollider>().radius = colRadius * sy;
         }
         else
         {
@@ -274,18 +276,20 @@ public class ProceduralAnimator : MonoBehaviour
 
         go.AddComponent<RagdollPart>().owner = this;
 
-        var part = new Part { rb = rb, restPos = center };
+        var part = new Part { rb = rb, restPos = center, halfLength = length * 0.5f };
         parts.Add(part);
         return part;
     }
 
-    void AddEye(Part headPart, Vector3 localPos, Material mat)
+    void AddFoot(Part shin, Material mat)
     {
-        var eye = new GameObject("Eye");
-        eye.transform.SetParent(headPart.rb.transform, false);
-        eye.transform.localPosition = localPos;
-        eye.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.Capsule(0.035f, 0f, 1f, 0.6f, 6, 2);
-        eye.AddComponent<MeshRenderer>().sharedMaterial = mat;
+        var foot = new GameObject("Foot");
+        foot.transform.SetParent(shin.rb.transform, false);
+        // Srodek stopy: 7.5 cm nad ziemia, 4 cm do przodu; kapsula polozona wzdluz osi Z
+        foot.transform.localPosition = new Vector3(0f, 0.075f - shin.restPos.y, 0.04f);
+        foot.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+        foot.AddComponent<MeshFilter>().sharedMesh = LowPolyFactory.SmoothCapsule(0.075f, 0.075f, 0.12f, 1.3f, 1f, 0.85f, 16, 6);
+        foot.AddComponent<MeshRenderer>().sharedMaterial = mat;
     }
 
     void Connect(Part child, Part parent, Vector3 anchor, float lowX, float highX, float limY, float limZ, float spring, float damper)

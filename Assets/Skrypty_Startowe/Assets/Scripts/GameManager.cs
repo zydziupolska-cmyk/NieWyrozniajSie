@@ -14,6 +14,8 @@ public class GameManager : MonoBehaviour
     public enum State { Menu, Playing, Paused, GameOver }
 
     [Range(30, 400)] public int botCount = 120;
+    [Tooltip("Kolorowe stroje zamiast klasycznych bialych Bobow z Human Fall Flat.")]
+    public bool colorfulOutfits = false;
 
     public State CurrentState { get; private set; }
     public Mode CurrentMode { get; private set; }
@@ -214,6 +216,7 @@ public class GameManager : MonoBehaviour
         var go = NewCharacterObject("Bot", RandomSpawnPoint(0f));
         go.AddComponent<NavMeshAgent>();
         var m = go.AddComponent<CrowdMember>();
+        m.Animator.randomOutfit = colorfulOutfits;
         go.AddComponent<BotAI>();
         return m;
     }
@@ -223,6 +226,7 @@ public class GameManager : MonoBehaviour
         var go = NewCharacterObject("Bot", RandomSpawnPoint(12f)); // ta sama nazwa co boty - bez podpowiedzi w hierarchii
         go.AddComponent<NavMeshAgent>();
         var m = go.AddComponent<CrowdMember>();
+        m.Animator.randomOutfit = colorfulOutfits;
         m.isSpy = true;
         go.AddComponent<AISpy>();
         return m;
@@ -238,6 +242,7 @@ public class GameManager : MonoBehaviour
         cc.stepOffset = 0.3f;
         cc.skinWidth = 0.03f;
         var m = go.AddComponent<CrowdMember>();
+        m.Animator.randomOutfit = colorfulOutfits;
         m.isSpy = true;
         m.isPlayer = true;
         playerSpyCtrl = go.AddComponent<SpyController>();
@@ -475,6 +480,12 @@ public class GameManager : MonoBehaviour
         float sy = Screen.height - 120 * s;
         Label(new Rect(cx - 260 * s, sy, 520 * s, 36 * s), "Liczba botów: " + botCount + (botCount > 250 ? "  (może zwolnić!)" : ""), textStyle, Color.white);
         botCount = Mathf.RoundToInt(GUI.HorizontalSlider(new Rect(cx - 260 * s, sy + 44 * s, 520 * s, 30 * s), botCount, 30f, 400f) / 10f) * 10;
+        string look = colorfulOutfits ? "Wygląd: KOLOROWE STROJE" : "Wygląd: BIAŁE BOBY";
+        if (GUI.Button(new Rect(cx + 290 * s, sy + 10 * s, 380 * s, 56 * s), look, buttonStyle))
+        {
+            colorfulOutfits = !colorfulOutfits;
+            EnterMenu(); // odswiez tlum w tle
+        }
     }
 
     void DrawHud(float s)

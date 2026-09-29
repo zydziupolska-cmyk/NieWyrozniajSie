@@ -1,12 +1,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Generuje kanciaste (flat-shaded) siatki i wspoldzielone materialy.
+// Generuje siatki (kanciaste dla otoczenia, gladkie dla postaci) i wspoldzielone materialy.
 // Wszystko jest cache'owane, wiec 500 botow korzysta z tych samych assetow.
 public static class LowPolyFactory
 {
     static readonly Dictionary<string, Mesh> meshCache = new Dictionary<string, Mesh>();
     static readonly Dictionary<Color, Material> materialCache = new Dictionary<Color, Material>();
+    static readonly Dictionary<Color, Material> bodyCache = new Dictionary<Color, Material>();
     static readonly Dictionary<Color, Material> unlitCache = new Dictionary<Color, Material>();
     static Shader cachedShader, cachedUnlitShader;
 
@@ -132,6 +133,83 @@ public static class LowPolyFactory
         mesh.RecalculateBounds();
         meshCache[key] = mesh;
         return mesh;
+    }
+
+    // Gladka (smooth-shaded) kapsula wzdluz osi Y, wysrodkowana w (0,0,0) - styl Human Fall Flat.
+    // rBottom / rTop - rozne promienie polkul daja ksztalt jajka (tulow) albo lapki (dlon).
+    // length = odleglosc miedzy srodkami polkul (0 = kula / elipsoida).
+    public static Mesh SmoothCapsule(float rBottom, float rTop, float length, float sx = 1f, float sy = 1f, float sz = 1f,
+                                     int sides = 20, int capRings = 8)
+    {
+        string key = $"S_{rBottom:F3}_{rTop:F3}_{length:F3}_{sx:F2}_{sy:F2}_{sz:F2}_{sides}_{capRings}";
+        if (meshCache.TryGetValue(key, out Mesh cached) && cached != null) return cached;
+
+        float half = length * 0.5f;
+        var rings = new List<Vector2>(); // (wysokosc, promien)
+        for (int i = 1; i <= capRings; i++)
+        {
+            float lat = (-90f + 90f * i / capRings) * Mathf.Deg2Rad;
+            rings.Add(new Vector2(Mathf.Sin(lat) * rBottom * sy - half, Mathf.Cos(lat) * rBottom));
+        }
+        for (int i = length > 0.0001f ? 0 : 1; i < capRings; i++)
+        {
+            float lat = (90f * i / capRings) * Mathf.Deg2Rad;
+            rings.Add(new Vector2(Mathf.Sin(lat) * rTop * sy + half, Mathf.Cos(lat) * rTop));
+        }
+
+        // Wierzcholki wspoldzielone -> RecalculateNormals daje gladkie cieniowanie
+        var verts = new List<Vector3> { new Vector3(0f, -half - rBottom * sy, 0f) };
+        foreach (var r in rings)
+            for (int s = 0; s < sides; s++)
+            {
+                float a = Mathf.PI * 2f * s / sides;
+                verts.Add(new Vector3(Mathf.Sin(a) * r.y * sx, r.x, Mathf.Cos(a) * r.y * sz));
+            }
+        verts.Add(new Vector3(0f, half + rTop * sy, 0f));
+        int top = verts.Count - 1;
+
+        var tris = new List<int>();
+        int Idx(int ring, int s) => 1 + ring * sides + (s % sides);
+        void Tri(int a, int b, int c)
+        {
+            // Unity: przod = wierzcholki zgodnie z ruchem wskazowek zegara patrzac z zewnatrz
+            Vector3 n = Vector3.Cross(verts[b] - verts[a], verts[c] - verts[a]);
+            Vector3 centroid = (verts[a] + verts[b] + verts[c]) / 3f;
+            Vector3 axisPoint = new Vector3(0f, Mathf.Clamp(centroid.y, -half, half), 0f);
+            if (Vector3.Dot(n, centroid - axisPoint) < 0f) { int t = b; b = c; c = t; }
+            tris.Add(a); tris.Add(b); tris.Add(c);
+        }
+
+        int last = rings.Count - 1;
+        for (int s = 0; s < sides; s++)
+        {
+            Tri(0, Idx(0, s), Idx(0, s + 1));
+            for (int r = 0; r < last; r++)
+            {
+                Tri(Idx(r, s), Idx(r, s + 1), Idx(r + 1, s + 1));
+                Tri(Idx(r, s), Idx(r + 1, s + 1), Idx(r + 1, s));
+            }
+            Tri(top, Idx(last, s + 1), Idx(last, s));
+        }
+
+        var mesh = new Mesh { name = "SmoothCapsule_" + key };
+        mesh.SetVertices(verts);
+        mesh.SetTriangles(tris, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        meshCache[key] = mesh;
+        return mesh;
+    }
+
+    // Material "plastikowego ludzika" - lekko blyszczacy jak Bob z Human Fall Flat
+    public static Material GetBodyMaterial(Color color)
+    {
+        if (bodyCache.TryGetValue(color, out Material cached) && cached != null) return cached;
+        var mat = new Material(GetMaterial(color)) { name = "Body_" + ColorUtility.ToHtmlStringRGB(color) };
+        if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.35f);
+        if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.35f);
+        bodyCache[color] = mat;
+        return mat;
     }
 
     // Matowy, "plastelinowy" material jak w Human Fall Flat
