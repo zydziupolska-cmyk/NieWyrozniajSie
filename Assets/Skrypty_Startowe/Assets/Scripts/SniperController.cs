@@ -71,34 +71,48 @@ public class SniperController : MonoBehaviour
             Ray ray = sniperCamera.ScreenPointToRay(new Vector3(Screen.width / 2, Screen.height / 2, 0));
             RaycastHit hit;
             
-            if (Physics.Raycast(ray, out hit, 200f))
+            if (Physics.Raycast(ray, out hit, 500f, ProceduralAnimator.ShootableMask, QueryTriggerInteraction.Ignore))
             {
                 Debug.Log("Strzal w: " + hit.collider.name);
-                
-                // Sprawdz czy trafiono Bota
-                BotAI bot = hit.collider.GetComponentInParent<BotAI>();
-                if (bot != null)
+
+                // Trafiona czesc ciala wie, do kogo nalezy
+                RagdollPart part = hit.collider.GetComponent<RagdollPart>();
+                ProceduralAnimator target = part != null ? part.owner : hit.collider.GetComponentInParent<ProceduralAnimator>();
+
+                if (target != null && !target.IsDead)
                 {
-                    ProceduralAnimator anim = bot.GetComponent<ProceduralAnimator>();
-                    if (anim != null) anim.EnableRagdoll(ray.direction);
-                    bot.enabled = false; // Wylacz logiczne dzialanie bota
-                    TriggerGlobalPanic();
+                    // Sprawdz czy trafiono gracza
+                    SpyController spy = target.GetComponent<SpyController>();
+                    if (spy != null)
+                    {
+                        Debug.Log("SNAJPER WYGRAL! Szpieg zastrzelony.");
+                        spy.Kill(ray.direction, hit.rigidbody, hit.point);
+                        return;
+                    }
+
+                    // Sprawdz czy trafiono Bota
+                    BotAI bot = target.GetComponent<BotAI>();
+                    if (bot != null)
+                    {
+                        bot.Kill(ray.direction, hit.rigidbody, hit.point);
+                        TriggerGlobalPanic();
+                        return;
+                    }
                 }
-                
-                // Sprawdz czy trafiono gracza
-                SpyController spy = hit.collider.GetComponentInParent<SpyController>();
-                if (spy != null)
-                {
-                    Debug.Log("SNAJPER WYGRAL! Szpieg zastrzelony.");
-                    spy.gameObject.SetActive(false); // Zabij gracza
-                }
+
+                // Strzal w trupa albo w otoczenie - popchnij to, co dostalo
+                if (target != null) target.Push(ray.direction, hit.rigidbody, hit.point);
+                else if (hit.rigidbody != null) hit.rigidbody.AddForceAtPosition(ray.direction * 20f, hit.point, ForceMode.Impulse);
             }
+
+            // Pudlo tez straszy tlum
+            TriggerGlobalPanic();
         }
     }
 
     void TriggerGlobalPanic()
     {
-        Debug.Log("PUDLO W CYWILA! Tlum panikuje!");
+        Debug.Log("Tlum panikuje!");
         BotAI[] allBots = FindObjectsByType<BotAI>(FindObjectsSortMode.None);
         foreach(var bot in allBots)
         {
